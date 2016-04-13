@@ -56,6 +56,8 @@ NOTES AND EDGE CASES:
 					- there is an implicit *
 				- If a paren, a [closed] function, or t is immediately followed by a numeric
 					- there is an implicit *
+				- In other words, if a number is adjacent to anything except an operation, 
+					- there's an implicit multiply
 		- When an implicit operation is detected, 
 			- the applicable operation/numeric is added automatically
 -------------------------------------------------------------------------------------------
@@ -63,24 +65,31 @@ NOTES AND EDGE CASES:
 
 var errString = '';//used for error handling
 
-var number = '\d+';
-var constant = 'e|pi|phi';
-var number_regex_str = '(' + number + '|' + constant + ')';
-var log_regex_str = '(log(_' + number_regex_str + ')?|ln)';//if no base is included, it's assumed to be 10
-var trig_regex_str = '((a|arc)?((cos)|(sin)|(tan)|(sec)|(csc)|(cot))h?)';
-var add_regex = '(\+|-)';
-var mul_regex = '(\*|\/)';
-var operator_regex = '(\^|' + mul_regex + '|' + add_regex + ')';
-var finder_regex = new RegExp(
-'(' + number_regex_str + '|\(|)|' + trig_regex_str + '|' + log_regex_str + '|' operator_regex + ')'
-);
-var number_regex = 	 new RegExp(number_regex_str);
-var trig_regex = 	 new RegExp(trig_regex_str);
-var log_regex = 	 new RegExp(log_regex_str);
-
 var phi = (1 + Math.sqrt(5)) / 2;// 1.618033988749895
 var pi = Math.PI;
 var e = Math.E;
+
+var number = '\d+';
+var constant_list = ['e','pi','phi'];
+var constant_vals = [ e, pi, phi ];
+var constant = constant_list.join('|');
+constant_list.forEach(function(element,index) { constant_list[index] = [ new RegExp(element), constant_vals[index] ]; });
+var number_regex_str = '(' + number + '|' + constant + ')';
+
+var log_regex_str = '(log(_' + number_regex_str + ')?|ln)';//if no base is included, it's assumed to be 10
+var trig_regex_str = '((a|arc)?((cos)|(sin)|(tan)|(sec)|(csc)|(cot))h?)';
+
+var add_regex = '(\+|-)';
+var mul_regex = '(\*|\/)';
+var operator_regex = '(\^|' + mul_regex + '|' + add_regex + ')';
+
+var finder_regex = new RegExp(
+'(' + number_regex_str + '|\(|)|' + trig_regex_str + '|' + log_regex_str + '|' operator_regex + ')'
+);
+
+var number_regex = new RegExp(number_regex_str);
+var trig_regex   = new RegExp(trig_regex_str);
+var log_regex    = new RegExp(log_regex_str);
 
 function add(a,b) { return a + b; }
 function sub(a,b) { return a - b; }
@@ -139,7 +148,7 @@ Constant.prototype = Object.create(Expression.prototype);
 Constant.prototype.evaluate = function(t) { return this.value; }
 
 function genExpression(op,left,right) {
-	if(left && left.value && right && right.value)
+	if(((left && left.value) || !left) && ((right && right.value) || !right))
 		return new Constant(op(left,right));
 	return new Expression(op,left,right);
 }
@@ -179,6 +188,7 @@ function parseEquation(eqString) {
 	var expressionList = [[]];
 	var operationList = [[]];
 	var depth = 0;
+	var numExprReq = 0;
 	var lastOp = [];
 	while(eqString.length) {
 		var expr = eqString.match(finder_regex)[0];
@@ -190,14 +200,23 @@ function parseEquation(eqString) {
 			return undefined;
 		}
 		else if(expr.test(number_regex)) {
-			expressionList[depth].push(new Constant(Number.parseFloat(expr)));
+			var val;
+			if(expr.test(/\d+/))
+				val = Number.parseFloat(expr);
+			else {
+				constant_list.some(function(element,index) {
+					var found = expr.test(element[0]);
+					return found && val = element[1];
+				});
+			}
+			expressionList[depth].push(new Constant(val));
 		}
 		else if(expr[0] == '(' || expr[0] == '|') {
 			if(expr[0] == '|' && depth && lastOp[depth - 1] == '|') {
 				var absExpr = getExpression(expressionList[depth],operationList[depth]);
 				if(absExpr == undefined) return undefined;
 				depth--;
-				if(absExpr != null) expressionList[depth].push(new Expression(abs,absExpr,undefined));
+				if(absExpr != null) expressionList[depth].push(genExpression(abs,absExpr,undefined));
 			}
 			else {
 				lastOp[depth] = expr[0];
@@ -220,14 +239,19 @@ function parseEquation(eqString) {
 		else if(expr.test(trig_regex)) {
 			operationList[depth].push(trig_fns[expr]);
 			currOp = 'fn';
+			numExpReq += trig_fns[expr].length;
 		}
 		else if(expr.test(log_regex)) {
-			if(expr[1] == 'n') operationList[depth].push(ln);
+			if(expr[1] == 'n') {
+				operationList[depth].push(ln);
+				numExpReq += ln.length;
+			}
 			else {
 				operationList[depth].push(log);
 				var base = expr.match(number_regex)[0];
 				if(base) expressionList[depth].push(new Constant(Number.parseFloat(base)));
 				else 	 expressionList[depth].push(new Constant(10));
+				numExpReq += log.length;
 			}
 			currOp = 'fn';
 		}
@@ -246,22 +270,27 @@ function parseEquation(eqString) {
 				}
 				else operationList[depth].push(exp);
 				currOp = 'exp';
+				numExprReq += exp.length;
 			}
 			else if(expr[0] == '*') {
 				operationList[depth].push(mul);
 				currOp = 'mul';
+				numExpReq += mul.length;
 			}
-			else if(expr[0] == '\') {
+			else if(expr[0] == '/') {
 				operationList[depth].push(div);
 				currOp = 'mul';
+				numExpReq += div.length;
 			}
 			else if(expr[0] == '+') {
 				operationList[depth].push(add);
 				currOp = 'add';
+				numExpReq += add.length;
 			}
 			else if(expr[0] == '-') {
 				operationList[depth].push(sub);
 				currOp = 'add';
+				numExpReq += sub.length;
 			}
 			
 			if( currOp && lastOp[depth] 
@@ -276,7 +305,7 @@ function parseEquation(eqString) {
 		}
 	}
 	if(depth > 0) {
-		errString = 'Open ( found with no matching closing )';
+		errString = 'Open ' + lastOp[depth - 1] + ' found with no closure';
 		return undefined;
 	}
 }
