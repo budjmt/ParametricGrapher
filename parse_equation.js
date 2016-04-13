@@ -125,7 +125,9 @@ var Expression = function(op,a,b) {
 };
 
 Expression.prototype.evaluate = function(t) {
-	return this.operation(this.left.evaluate(t)), this.right.evaluate(t));
+	var l = (this.left)  ? this.left.evaluate(t)  : this.left;
+	var r = (this.right) ? this.right.evaluate(t) : this.right;
+	return this.operation(l, r);
 }
 
 var T = function() { Expression.call(this); }
@@ -137,7 +139,7 @@ Constant.prototype = Object.create(Expression.prototype);
 Constant.prototype.evaluate = function(t) { return this.value; }
 
 function genExpression(op,left,right) {
-	if(left.value && right.value)
+	if(left && left.value && right && right.value)
 		return new Constant(op(left,right));
 	return new Expression(op,left,right);
 }
@@ -191,10 +193,19 @@ function parseEquation(eqString) {
 			expressionList[depth].push(new Constant(Number.parseFloat(expr)));
 		}
 		else if(expr[0] == '(' || expr[0] == '|') {
-			lastOp[depth] = expr[0];
-			++depth;
-			expressionList[depth] = [];
-			operationList[depth] = [];
+			if(expr[0] == '|' && depth && lastOp[depth - 1] == '|') {
+				var absExpr = getExpression(expressionList[depth],operationList[depth]);
+				if(absExpr == undefined) return undefined;
+				depth--;
+				if(absExpr != null) expressionList[depth].push(new Expression(abs,absExpr,undefined));
+			}
+			else {
+				lastOp[depth] = expr[0];
+				++depth;
+				lastOp[depth] = undefined;
+				expressionList[depth] = [];
+				operationList[depth] = [];
+			}
 		}
 		else if(expr[0] == ')') {
 			if(!depth) {
@@ -202,6 +213,7 @@ function parseEquation(eqString) {
 				return undefined;
 			}
 			var parenExpr = getExpression(expressionList[depth],operationList[depth]);
+			if(parenExpr == undefined) return undefined;
 			depth--;
 			if(parenExpr != null) expressionList[depth].push(parenExpr);
 		}
