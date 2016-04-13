@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Graphing Utility</title>
+
+<script type="text/javascript" src="parse_equation.js"></script>
+<script>
+var graphX, x_val, graphY, y_val;
+var minBoundX, maxBoundX;
+var minBoundY, maxBoundY;
+var equation;
+var unitsPerGraph = 100;
+var segmentsPerUnit = 5;
+
+var canvas, ctx;
+
+function graphSetup() {
+	canvas = document.querySelector("canvas");
+	ctx = canvas.getContext('2d');
+
+	maxBoundX = 100; minBoundX = -maxBoundX;
+	maxBoundY = 100; minBoundY = -maxBoundY;
+	graphX = document.querySelector("#x_eq");
+	graphY = document.querySelector("#y_eq");
+	graphX.onchange = updateEquation;
+	graphY.onchange = updateEquation;
+	equation = { 'x' : '', 'y' : '' };
+	updateEquation();
+}
+
+function parseEquations(x_eq, y_eq) {
+	if(x_val != x_eq) {
+		x_val = x_eq;
+		equation.x = parseEquation(x_eq);
+	}
+	if(y_val != y_eq) {
+		y_val = y_eq;
+		equation.y = parseEquation(y_eq);
+	}
+} 
+
+function updateEquation() { equation = parseEquations(graphX.value, graphY.value); }
+
+function graphDraw() {
+	var tUnits = (maxBoundX - minBoundX) / unitsPerGraph / segmentsPerUnit;
+	
+	ctx.beginPath();
+	ctx.moveTo(0, canvas.height / 2);
+	ctx.lineTo(canvas.width, canvas.height / 2);
+	ctx.stroke();
+	ctx.moveTo(canvas.width / 2, 0);
+	ctx.lineTo(canvas.width / 2, canvas.height);
+	ctx.stroke();
+	
+	for(var t = -unitsPerGraph / 2, end = unitsPerGraph / 2 - tUnits; t < end; t += tUnits) {
+		ctx.moveTo(equation.x(t), equation.y(t));
+		ctx.lineTo(equation.x(t + tUnits), equation.y(t + tUnits));
+	}
+	ctx.stroke();
+}
+
+window.onload = graphSetup;
+</script>
+
+</head>
+<body>
+<canvas style="width: 100%; height: 100%"></canvas>
+<form>
+X = <input type="text" id="x_eq" value="t"><br>
+Y = <input type="text" id="y_eq" value="t">
+</form>
+</body>
+</html>
