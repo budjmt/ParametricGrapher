@@ -97,10 +97,10 @@ var trig_regex_str = '((a|arc)?((cos)|(sin)|(tan)|(sec)|(csc)|(cot))h?)';
 
 var add_regex = '(\+|-)';
 var mul_regex = '(\*|\/)';
-var operator_regex = '(\^|(sqrt)' + mul_regex + '|' + add_regex + ')';
+var operator_regex = '(\^|' + mul_regex + '|' + add_regex + ')';
 
 var finder_regex = new RegExp(
-'(^' + number_regex_str + '|^\(|^\)|^' + trig_regex_str + '|^' + log_regex_str + '|^' operator_regex +  '|^t)'
+'(^' + number_regex_str + '|^\(|^\)|^' + trig_regex_str + '|^' + log_regex_str + '|^(sqrt)' + '|^' + operator_regex +  '|^t)'
 );
 
 var number_regex = new RegExp(number_regex_str);
@@ -287,23 +287,31 @@ function parseEquation(eqString) {
 			}
 			currOp = 'fn';
 		}
+		else if(expr.text(/(sqrt)/) {
+			operationList[depth].push(sqrt);
+			currOp = 'fn';
+			numExprReq[depth] += sqrt.length;
+		}
 		else if(expr.test(operator_regex)) {
 			if((expr[0] == '+' || expr[0] == '-') && numExprReq[depth] > expressions[depth].length) {
 				expressions[depth].push(new Constant(0));
 			}
 			if(expr[0] == '^' || expr[0] == 's') {
-				var op = exp, trig_op;
-				if(expr[0] == 's') { op = sqrt; operationList[depth].push(sqrt); }
+				var trig_op;
 				else if( lastOp[depth] && trig_op = operations[depth][operations[depth].length - 1]
 					&& trig_fns.hasOwnProperty(trig_op.name) ) {
 					//special case for trig exponents; we have to swap the operations
 					//because the exponent would come second
 					operationList[depth].push(trig_op);
 					operationList[depth][operationList[depth].length - 2] = exp;
+					currOp = 'fn';
+					lastOp[depth] = 'exp';//for the swap to work
 				}
-				else operationList[depth].push(exp);
-				currOp = 'exp';
-				numExprReq[depth] += op.length;
+				else {
+					operationList[depth].push(exp);
+					currOp = 'exp';
+				}
+				numExprReq[depth] += exp.length;
 			}
 			else if(expr[0] == '*') {
 				operationList[depth].push(mul);
