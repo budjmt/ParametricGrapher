@@ -16,7 +16,7 @@ var minBoundX, maxBoundX;
 var minBoundY, maxBoundY;
 var equation;
 var tUnits = 1000;
-var unitsPerPixel = 1 / 20;
+var pixelsPerUnit = 20;
 var segmentsPerUnit = 5;
 
 var canvas, ctx;
@@ -69,15 +69,20 @@ function updateEquation() {
 }
 
 function drawT(t,tn) {
-	var tx = equation.x.evaluate(t) / unitsPerPixel
-	  , ty = equation.y.evaluate(t) / unitsPerPixel;
-	if(!Number.isFinite(tx) || !Number.isFinite(ty))
+	var tx = equation.x.evaluate(t) * pixelsPerUnit
+	  , ty = equation.y.evaluate(t) * pixelsPerUnit;
+	if(Number.isNaN(tx) || Number.isNaN(ty))
 		return;
+	var bigNum = Number.MAX_VALUE;
+	!Number.isFinite(tx) && (tx = Math.sign(tx) * bigNum);
+	!Number.isFinite(ty) && (ty = Math.sign(ty) * bigNum);
 	
-	var txn = equation.x.evaluate(tn) / unitsPerPixel
-	  , tyn = equation.y.evaluate(tn) / unitsPerPixel;
-	!Number.isFinite(txn) && (txn = tx);
-	!Number.isFinite(tyn) && (txy = ty);
+	var txn = equation.x.evaluate(tn) * pixelsPerUnit
+	  , tyn = equation.y.evaluate(tn) * pixelsPerUnit;
+	(Number.isNaN(txn) && (txn = tx)) || 
+	(!Number.isFinite(txn) && (txn = Math.sign(txn) * bigNum));
+	(Number.isNaN(tyn) && (tyn = ty)) || 
+	(!Number.isFinite(tyn) && (tyn = Math.sign(tyn) * bigNum));
 	
 	ctx.moveTo(tx, -ty);
 	ctx.lineTo(txn,-tyn);
@@ -97,20 +102,24 @@ function graphDraw() {
 	ctx.translate(canvas.width/2,canvas.height/2);
 	
 	var unitsPerMarker = 1;
-	for(var notches = canvas.width * unitsPerPixel / unitsPerMarker, i = 0; i < notches; i++) {
+	for(var notches = canvas.width / pixelsPerUnit / unitsPerMarker, i = 0; i < notches; i++) {
 		var pos = canvas.width * i / notches;
 		ctx.moveTo(pos,-5); ctx.lineTo(pos,5); ctx.stroke();
 		ctx.moveTo(-pos,-5); ctx.lineTo(-pos,5); ctx.stroke();
 	}
-	for(var notches = canvas.height * unitsPerPixel / unitsPerMarker, i = 0; i < notches; i++) {
+	for(var notches = canvas.height / pixelsPerUnit / unitsPerMarker, i = 0; i < notches; i++) {
 		var pos = canvas.height * i / notches;
 		ctx.moveTo(-5,pos); ctx.lineTo(5,pos); ctx.stroke();
 		ctx.moveTo(-5,-pos); ctx.lineTo(5,-pos); ctx.stroke();
 	}
 	if(equation.x && equation.y) {
 		var tUpS = 1 / segmentsPerUnit;
-		for(var t = 0, end = tUnits - tUpS; t < end; t += tUpS) {
-			drawT(t,t+tUpS); drawT(-t,-t-tUpS);
+		for(var t = 0.000001, end = tUnits - tUpS; t < end; t += tUpS) {
+			drawT(t,(t+tUpS));
+		}
+		ctx.stroke();
+		for(var t = 0.000001, end = tUnits - tUpS; t < end; t += tUpS) {
+			drawT(-t,-(t+tUpS));
 		}
 		ctx.stroke();
 	}	
@@ -125,8 +134,8 @@ window.onresize = function() { resize(); graphDraw(); };
 <body>
 <canvas></canvas>
 <form>
-X = <input type="text" id="x_eq" value="t"><br>
-Y = <input type="text" id="y_eq" value="t">
+X = <input type="text" id="x_eq" value="(2*(cost) - (cos(2t)))*3"><br>
+Y = <input type="text" id="y_eq" value="(2*(sint) - (sin(2t)))*3">
 </form>
 <p id="error"></p>
 </body>

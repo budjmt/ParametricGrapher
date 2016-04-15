@@ -132,12 +132,12 @@ function cos(a)  { return Math.cos(a);  }     function acos(a)  { return Math.ac
 function cosh(a) { return Math.cosh(a); }     function acosh(a) { return Math.acosh(a);   }
 function tan(a)  { return Math.tan(a);  }     function atan(a)  { return Math.atan2(a,1); }
 function tanh(a) { return Math.tanh(a); }     function atanh(a) { return Math.atanh(a);   }
-function csc(a)  { return 1 / Math.sin(a);  } function acsc(a)  { return Math.asin(1/a);  }
-function csch(a) { return 1 / Math.sinh(a); } function acsch(a) { return Math.asinh(1/a); }
-function sec(a)  { return 1 / Math.cos(a);  } function asec(a)  { return Math.acos(1/a);  }
-function sech(a) { return 1 / Math.cosh(a); } function asech(a) { return Math.acosh(1/a); }
-function cot(a)  { return 1 / Math.tan(a);  } function acot(a)  { return Math.atan2(1/a); }
-function coth(a) { return 1 / Math.tanh(a); } function acoth(a) { return Math.atanh(1/a); }
+function csc(a)  { return 1 / sin(a);  } function acsc(a)  { return asin(1/a);  }
+function csch(a) { return 1 / sinh(a); } function acsch(a) { return asinh(1/a); }
+function sec(a)  { return 1 / cos(a);  } function asec(a)  { return acos(1/a);  }
+function sech(a) { return 1 / cosh(a); } function asech(a) { return acosh(1/a); }
+function cot(a)  { return 1 / tan(a);  } function acot(a)  { return atan(1/a); }
+function coth(a) { return 1 / tanh(a); } function acoth(a) { return atanh(1/a); }
 var trig_fns = { 
 	sin:sin,asin:asin,arcsin:asin,sinh:sinh,asinh:asinh,arcsinh:asinh,
 	cos:cos,acos:acos,arccos:acos,cosh:cosh,acosh:acosh,arccosh:acosh,
@@ -161,8 +161,8 @@ var Expression = function(op,a,b) {
 Expression.prototype.name = 'Expression';
 Expression.prototype.toString = function() { 
 	return '(' + this.operation.name + ' '
-	+ ((this.operation.length > 1) ? this.left.toString() + ', ' : '')
-	+ this.right.toString() + ')';
+	+ this.left.toString()
+	+ ((this.operation.length > 1) ? ', ' + this.right.toString() : '') + ')';
 }
 Expression.prototype.evaluate = function(t) {
 	return this.operation(this.left.evaluate(t), this.right.evaluate(t));
@@ -187,7 +187,7 @@ function genExpression(op,left,right) {
 	
 	if(!left)  left  = new Constant(0);
 	if(!right) right = new Constant(0);
-	if(left.value && right.value)
+	if(left.value != undefined && right.value != undefined)
 		return new Constant(op(left.value,right.value));
 	if(op.length == 1 && left.value == 0 && !right.value) {
 		left = right;
@@ -254,7 +254,7 @@ function parseEquation(eqString) {
 		//it matches each time because some results are dependent on others being processed
 		var expr = eqString.match(finder_regex);
 		if(!expr) {
-			errString = 'Invalid equation';
+			errString = 'Invalid equation, there was an invalid term';
 			return undefined;
 		}
 		expr = expr[0];
@@ -357,7 +357,7 @@ function parseEquation(eqString) {
 				operationList[depth].push(div);
 				currOp = 'op';
 				numExprReq[depth] = (div.length > numExprReq[depth]) ? 
-					div.length : numExprReqp[depth] + 1;
+					div.length : numExprReq[depth] + 1;
 			}
 			else if(expr[0] == '+') {
 				operationList[depth].push(add);
@@ -407,7 +407,7 @@ function parseEquation(eqString) {
 		//console.log(lastOp[depth] + ', ' + currOp);
 		var numOps = operationList[depth].length;
 		if( numOps > 1 &&
-			operationList[depth][numOps - 2].oo < operationList[depth][numOps - 1].oo ) {
+			operationList[depth][numOps - 2].oo <= operationList[depth][numOps - 1].oo ) {
 			//we must evaluate an expression since we broke order of operations
 			var op = operationList[depth].pop();
 			expressionList[depth] = 
