@@ -1,30 +1,42 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<title>Graphing Utility</title>
-
+<title>Parametric Graphing Utility</title>
+<style>
+html,body { width: 100%; height: 100%; margin: 0px; }
+form { position: fixed; bottom: 10px; left: 10px; }
+#error { position: fixed; bottom: 10px; right: 10px; color: red; }
+canvas { margin-left: 5px; margin-top: 5px;
+</style>
 <script type="text/javascript" src="parse_equation.js"></script>
 <script>
+var error;
 var graphX, x_val, graphY, y_val;
 var minBoundX, maxBoundX;
 var minBoundY, maxBoundY;
 var equation;
-var unitsPerGraph = 100;
+var tUnits = 1000;
+var unitsPerPixel = 1 / 20;
 var segmentsPerUnit = 5;
 
 var canvas, ctx;
 
+function resize() { canvas.width = window.innerWidth - 10; canvas.height = window.innerHeight - 10; }
+
 function graphSetup() {
 	canvas = document.querySelector("canvas");
 	ctx = canvas.getContext('2d');
+	resize();
 
+	error = document.querySelector('#error');
+	
 	maxBoundX = 100; minBoundX = -maxBoundX;
 	maxBoundY = 100; minBoundY = -maxBoundY;
 	graphX = document.querySelector("#x_eq");
 	graphY = document.querySelector("#y_eq");
 	graphX.onchange = updateEquation;
 	graphY.onchange = updateEquation;
-	equation = { 'x' : '', 'y' : '' };
+	equation = {};
 	updateEquation();
 }
 
@@ -32,18 +44,47 @@ function parseEquations(x_eq, y_eq) {
 	if(x_val != x_eq) {
 		x_val = x_eq;
 		equation.x = parseEquation(x_eq);
+		if(!equation.x) {
+			error.innerHTML = errString;
+			return;
+		}
+		else
+			error.innerHTML = '';
 	}
 	if(y_val != y_eq) {
 		y_val = y_eq;
 		equation.y = parseEquation(y_eq);
+		if(!equation.y) {
+			error.innerHTML = errString;
+			return;
+		}
+		else
+			error.innerHTML = '';
 	}
 } 
 
-function updateEquation() { equation = parseEquations(graphX.value, graphY.value); }
+function updateEquation() { 
+	parseEquations(graphX.value, graphY.value); 
+	graphDraw();
+}
+
+function drawT(t,tn) {
+	var tx = equation.x.evaluate(t) / unitsPerPixel
+	  , ty = equation.y.evaluate(t) / unitsPerPixel;
+	if(!Number.isFinite(tx) || !Number.isFinite(ty))
+		return;
+	
+	var txn = equation.x.evaluate(tn) / unitsPerPixel
+	  , tyn = equation.y.evaluate(tn) / unitsPerPixel;
+	!Number.isFinite(txn) && (txn = tx);
+	!Number.isFinite(tyn) && (txy = ty);
+	
+	ctx.moveTo(tx, -ty);
+	ctx.lineTo(txn,-tyn);
+}
 
 function graphDraw() {
-	var tUnits = (maxBoundX - minBoundX) / unitsPerGraph / segmentsPerUnit;
-	
+	ctx.clearRect(0,0,canvas.width,canvas.height);
 	ctx.beginPath();
 	ctx.moveTo(0, canvas.height / 2);
 	ctx.lineTo(canvas.width, canvas.height / 2);
@@ -52,22 +93,41 @@ function graphDraw() {
 	ctx.lineTo(canvas.width / 2, canvas.height);
 	ctx.stroke();
 	
-	for(var t = -unitsPerGraph / 2, end = unitsPerGraph / 2 - tUnits; t < end; t += tUnits) {
-		ctx.moveTo(equation.x(t), equation.y(t));
-		ctx.lineTo(equation.x(t + tUnits), equation.y(t + tUnits));
+	ctx.save();
+	ctx.translate(canvas.width/2,canvas.height/2);
+	
+	var unitsPerMarker = 1;
+	for(var notches = canvas.width * unitsPerPixel / unitsPerMarker, i = 0; i < notches; i++) {
+		var pos = canvas.width * i / notches;
+		ctx.moveTo(pos,-5); ctx.lineTo(pos,5); ctx.stroke();
+		ctx.moveTo(-pos,-5); ctx.lineTo(-pos,5); ctx.stroke();
 	}
-	ctx.stroke();
+	for(var notches = canvas.height * unitsPerPixel / unitsPerMarker, i = 0; i < notches; i++) {
+		var pos = canvas.height * i / notches;
+		ctx.moveTo(-5,pos); ctx.lineTo(5,pos); ctx.stroke();
+		ctx.moveTo(-5,-pos); ctx.lineTo(5,-pos); ctx.stroke();
+	}
+	if(equation.x && equation.y) {
+		var tUpS = 1 / segmentsPerUnit;
+		for(var t = 0, end = tUnits - tUpS; t < end; t += tUpS) {
+			drawT(t,t+tUpS); drawT(-t,-t-tUpS);
+		}
+		ctx.stroke();
+	}	
+	ctx.restore();
 }
 
 window.onload = graphSetup;
+window.onresize = function() { resize(); graphDraw(); };
 </script>
 
 </head>
 <body>
-<canvas style="width: 100%; height: 100%"></canvas>
+<canvas></canvas>
 <form>
 X = <input type="text" id="x_eq" value="t"><br>
 Y = <input type="text" id="y_eq" value="t">
 </form>
+<p id="error"></p>
 </body>
 </html>
