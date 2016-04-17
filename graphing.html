@@ -14,8 +14,20 @@ form {
 	padding: 10px;
 }
 input { padding: 5px; width: 300px; margin: 5px auto; }
-#error { position: fixed; bottom: 10px; right: 20px; color: red; }
+#error { position: fixed; top: 5px; right: 40px; color: red; font-size: 14pt; font-weight: bold; }
 canvas { margin-left: 5px; margin-top: 5px; }
+
+#help { 
+	width: 40px;
+	height: 20px;
+	position: fixed;
+	bottom: 120px;
+	right: 30px; 
+	margin: 0;
+	padding: 5px;
+}
+#help > p { border: 1px solid black; }
+#help > div { margin-left: -100px; width: 200px; border: 1px solid black; }
 </style>
 <script type="text/javascript" src="parse_equation.js"></script>
 <script>
@@ -54,7 +66,7 @@ function parseEquations(x_eq, y_eq) {
 		x_val = x_eq;
 		equation.x = parseEquation(x_eq);
 		if(!equation.x) {
-			error.innerHTML = errString;
+			error.innerHTML = 'ERROR: ' + errString;
 			return;
 		}
 		else
@@ -64,7 +76,7 @@ function parseEquations(x_eq, y_eq) {
 		y_val = y_eq;
 		equation.y = parseEquation(y_eq);
 		if(!equation.y) {
-			error.innerHTML = errString;
+			error.innerHTML = 'ERROR: ' + errString;
 			return;
 		}
 		else
@@ -80,7 +92,8 @@ function updateEquation() {
 function drawT(t,tn) {
 	var tx = equation.x.evaluate(t) * pixelsPerUnit
 	  , ty = equation.y.evaluate(t) * pixelsPerUnit;
-	if(Number.isNaN(tx) || Number.isNaN(ty))
+	if(Number.isNaN(tx) || Number.isNaN(ty) ||
+		abs(tx) > canvas.width / 2 || abs(ty) > canvas.height / 2)
 		return;
 	var bigNum = Number.MAX_VALUE;
 	!Number.isFinite(tx) && (tx = Math.sign(tx) * bigNum);
@@ -93,6 +106,7 @@ function drawT(t,tn) {
 	(Number.isNaN(tyn) && (tyn = ty)) || 
 	(!Number.isFinite(tyn) && (tyn = Math.sign(tyn) * bigNum));
 	
+	//console.log('(' + tx + ', ' + ty + '), (' + txn + ', ' + tyn + ')');
 	ctx.moveTo(tx, -ty);
 	ctx.lineTo(txn,-tyn);
 }
@@ -143,9 +157,15 @@ window.onresize = function() { resize(); graphDraw(); };
 <body>
 <canvas></canvas>
 <form>
-X = <input type="text" id="x_eq" value="5*(3.1*(cos(t))-cos(3.1t))"><br>
-Y = <input type="text" id="y_eq" value="5*(3.1*(sin(t))-sin(3.1t))">
+X(t) = <input type="text" id="x_eq" value="5(3.1cost-cos(3.1t))"><br>
+Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 </form>
+<div id="help">
+	<p>Help</p>
+	<div>
+	<p><a href="https://elepa.files.wordpress.com/2013/11/fifty-famous-curves.pdf">https://elepa.files.wordpress.com/2013/11/fifty-famous-curves.pdf</a></p>
+	</div>
+</div>
 <p id="error"></p>
 </body>
 </html>

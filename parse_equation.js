@@ -24,28 +24,55 @@ NOTES AND EDGE CASES:
 	- Some functions that are not included:
 		- gradient
 		- gamma, zeta
+
+- Handling Functions
+	- Functions are very tricky. Conceptually, we wrap them in parentheses to force evaluation
+	- However, simply starting a new stack frame is not enough
+	- Unlike parentheses, we do not have an explicit close
+	- Instead, we have to track how many arguments have been received
+		- We increment a counter every time an expression is pushed;
+		- When that counter equals the number of arguments to the function,
+			- We evaluate the expression
+	- This works great for every type of expression: 
+		- numerics are normal, parentheses will evaluate out fine
+		- functions trigger the same process on another frame
+	- If an operator is pushed in a FUNCTION frame
+		- throw an error. This is not the case for a nested () frame.
+		- A FUNCTION frame is any frame that has a function at its lowest point
+			- We just check whenever adding an op that the lowest thing isn't a function
+		- The notable exception is TRIG EXPONENTS; TBD later
 		
-- Absolute value is interpreted like parentheses...
-	- ...With an additional abs expression wrapped around the result
+- Absolute value (abs) is a function, but syntactically works like parentheses
 	- The tricky distinction with abs is that there is no definitive closing criteria
 	- The method used to determine a close is as follows:
 		- The depth must be greater than 0
 		- The last operation on the previous depth must also have been an abs
-		- This is the tricky one: the number of required expressions on the current depth must be satisfied
+		- The number of required expressions on the current depth must be satisfied
+			- This is the tricky one
 			- Here we assume that if another abs is triggered and there still are remaining required expressions
-			- the abs we are evaluating is one of those of expressions
+			- the abs we are evaluating wraps one of those of expressions
 	- The number of required expressions is the total of required arguments for each operation on the operation stack
 		- It is considered satisfied is the number of expressions on the expression stack is >= to it
-		- ACTUALLY, the number is affected by cascade. Any function will output one value, so really...
-		- all we need are the greatest number of arguments in a function + the number of functions - 1?
-		- fix this
+		- The number is incremented every time we add an operation to the stack:
+			- If the number of arguments is > the current requisite, 
+				- the requisite becomes the number of args
+			- Otherwise, we just increment by 1
+			- This could change if later on expressions have multiple outputs
 	
 - Trig Exponents
-	- Exponents after a trig have a special interpretation, where it's treated as:
-		- (trig(val))^exp
-		- under ordinary interpretation this would be (trig(exp))^val, due to read order
-		- therefore, trig exponents actually have to let the trig function behind them go first,
-		- as if there were parentheses
+	- Exponents after a trig function have a special interpretation, where they're treated as:
+		- (^ (trig(val)) exp)
+		- under ordinary interpretation this would be (^ (trig(exp)) val), due to read order
+		- Fixing this is not trivial.
+			- Pushing the exponent and the next expression onto the previous frame
+				- Results in the expression (^ exp (trig(val))), which is NOT right
+			- What's the solution? Inversion count!
+				- now, when a VALID operator is read on a function stack,
+					- we set the PUSH function for this and the previous frame
+				- What does the PUSH function do? That depends:
+					- PUSH = currPush; add the expr as normal
+					- PUSH = prevPush; add the expr TO THE PREVIOUS FRAME
+					- PUSH = swapPush; push the expr, then swap with the current top expr
 	- Negative exponents are not allowed, you have to do that manually (b/c arc functions)
 	
 - Log functions
@@ -57,23 +84,25 @@ NOTES AND EDGE CASES:
 - Implicit operations
 	- There are two types of implicit operations:
 		- Unary +/-
-			- These occur when there are too many operations for expressions,
-			- after adding a + or -
+			- These occur when an operation is not preceded by an expression
+			- but only for + or - (really only -)
 			- The implementation is just if there is a +/- with too few expressions already
 				- Add a 0
-				- Theoretically, an implicit * or / would be a 1, but that's undefined anyway
+				- Theoretically, an implicit * or / would be a 1, 
+					- but that's undefined anyway, so we ignore it
 		- Implicit *
 			- This can happen on the left or right of any expression
-				- If a numeric is immediately followed by a paren, a function, or t, 
+				- If an expression is NOT followed by an operator
 					- there is an implicit *
-				- If a paren, a [closed] function, or t is immediately followed by a numeric
-					- there is an implicit *
-				- In other words, if a number is adjacent to anything except an operation, 
-					- there's an implicit multiply
-				- When adding a numeric or t, if there are more expressions than operations,
-					- there must be an implicit *
-				- Technically, any non-op in a position like this gets an implicit multiply...
-					- we'll fix that later
+					- EXCEPT at the end of the larger expression
+				- Does the end of expression thing make our life more difficult?
+					- If we reach the end of the overall string,
+						- the push function will never be called
+					- If we reach the end of a parentheses or abs scope,
+						- the frame gets popped, nothing is added
+					- If we reach the end of a function scope,
+						- same applies, the function gets popped
+					- The answer is no, it's naturally handled by the process
 		- When an implicit operation is detected, 
 			- the applicable operation/numeric is added automatically
 -------------------------------------------------------------------------------------------
@@ -81,15 +110,19 @@ NOTES AND EDGE CASES:
 
 var errString = '';//used for error handling
 
-var orderOfOperations = {
-	NONE : -1,
-	FN : 0,
-	EXP : 1,
-	MUL : 2,
-	ADD : 3
+var opOrder = {
+	NONE : undefined,
+	FN   :  0.1,
+	TRIG :  0.5,
+	EXP  :  1,
+	PROD :  2,
+	SUM  :  3
 };
-Object.seal(orderOfOperations);
-Function.prototype.oo = orderOfOperations.NONE;
+Object.seal(opOrder);
+Function.prototype.oo = opOrder.NONE;
+
+var type = { NONE : undefined, OP : 1, EXPR : 2 };
+Object.seal(type);
 
 var phi = (1 + Math.sqrt(5)) / 2;// 1.618033988749895
 var pi = Math.PI;
@@ -104,27 +137,29 @@ var number_regex_str = '(' + number + '|' + constant + ')';
 
 var log_regex_str = '(log_?|ln)';//if no base is included, it's assumed to be 10
 var trig_regex_str = '((a|arc)?((cos)|(sin)|(tan)|(sec)|(csc)|(cot))h?)';
+var function_regex_str = '(^' + trig_regex_str + '|^' + log_regex_str + '|^(sqrt))';
 
 var add_regex = '(\\+|-)';
 var mul_regex = '(\\*|\\/)';
 var operator_regex_str = '(\\^|' + mul_regex + '|' + add_regex + ')';
 
 var finder_regex = new RegExp(
-'(^' + number_regex_str + '|^\\(|^\\)|^' + trig_regex_str + '|^' + log_regex_str + '|^(sqrt)' + '|^' + operator_regex_str + '|^t)'
+'(^' + number_regex_str + '|^\\(|^\\)|\\||^' + function_regex_str + '|^' + operator_regex_str + '|^t)'
 );
 
 var number_regex   = new RegExp(number_regex_str);
 var trig_regex     = new RegExp(trig_regex_str);
 var log_regex      = new RegExp(log_regex_str);
+var function_regex = new RegExp(function_regex_str);
 var operator_regex = new RegExp(operator_regex_str);
 
-function add(a,b) { return a + b; } add.oo = orderOfOperations.ADD;
-function sub(a,b) { return a - b; } sub.oo = orderOfOperations.ADD;
-function mul(a,b) { return a * b; } mul.oo = orderOfOperations.MUL;
-function div(a,b) { return a / b; } div.oo = orderOfOperations.MUL;
+function add(a,b) { return a + b; } add.oo = opOrder.SUM;
+function sub(a,b) { return a - b; } sub.oo = opOrder.SUM;
+function mul(a,b) { return a * b; } mul.oo = opOrder.PROD;
+function div(a,b) { return a / b; } div.oo = opOrder.PROD;
 
-function exp(a,b) { return Math.pow(a,b); } exp.oo = orderOfOperations.EXP;
-function sqrt(a)  { return Math.sqrt(a);  } orderOfOperations.FN;
+function exp(a,b) { return Math.pow(a,b); } exp.oo  = opOrder.EXP;
+function sqrt(a)  { return Math.sqrt(a);  } sqrt.oo = opOrder.FN;
 
 function sin(a)  { return Math.sin(a);  }     function asin(a)  { return Math.asin(a);    }
 function sinh(a) { return Math.sinh(a); }     function asinh(a) { return Math.asinh(a);   }
@@ -146,12 +181,12 @@ var trig_fns = {
 	sec:sec,asec:asec,arcsec:asec,sech:sech,asech:asech,arcsech:asech,
 	cot:cot,acot:acot,arccot:acot,coth:coth,acoth:acoth,arccoth:acoth
  };
- for(var fn in trig_fns) { trig_fns[fn].oo = orderOfOperations.FN; }
+ for(var fn in trig_fns) { trig_fns[fn].oo = opOrder.TRIG; }
 
-function log(base,val) { return Math.log(val) / Math.log(base); } log.oo = orderOfOperations.FN;
-function ln(a) { return Math.log(a); } ln.oo = orderOfOperations.FN;
+function log(base,val) { return Math.log(val) / Math.log(base); } log.oo = opOrder.FN;
+function ln(a) { return Math.log(a); } ln.oo = opOrder.FN;
 
-function abs(a) { return Math.abs(a); } abs.oo = orderOfOperations.FN;
+function abs(a) { return Math.abs(a); } abs.oo = opOrder.FN;
 
 var Expression = function(op,a,b) {
 	this.operation = op;
@@ -180,6 +215,63 @@ Constant.prototype.toString = function() { return this.value; }
 Constant.prototype.name = 'Constant';
 Constant.prototype.evaluate = function() { return this.value; }
 
+var StackFrame = function(prev) {
+	this.expressionList = [];
+	this.operationList = [];
+	this.currAdd = type.NONE;
+	this.lastAdd = type.NONE;// tracks whether the last thing added was an expr or op
+	this.lastOp = opOrder.NONE;// tracks order of operations
+	this.argsAdded = 0;// tracks the number of expressions pushed
+	this.numExprReq = 0;// tracks the 
+	this.push = this.pushStd;
+	this.prev = prev;
+	this.wait = undefined;//when entering (paren) or |abs|, this is set to the opening character while on the other stack
+};
+
+StackFrame.prototype.hasEnoughExprs = function() {
+	return this.numExprReq <= this.expressionList.length
+}
+StackFrame.prototype.isFunctionStack = function() {
+	return this.lastOp < opOrder.EXP;
+}
+StackFrame.prototype.orderBroken = function() {
+	var end = this.operationList.length - 1;
+	if(end > 0) console.log(this.operationList[end - 1].name + ', ' + this.operationList[end].name);
+	return end > 0 && this.operationList[end - 1].oo <= this.operationList[end].oo;
+}
+StackFrame.prototype.functionReady = function() {
+	return this.isFunctionStack() && this.argsAdded >= this.operationList[0].length;
+}
+
+StackFrame.prototype.pushExpression = function(expr) { this.push(expr); };
+StackFrame.prototype.pushStd  = function(expr) { 
+	this.expressionList.push(expr); 
+	++this.argsAdded;
+	this.lastAdd = this.currAdd;
+	this.currAdd = type.EXPR;
+};
+StackFrame.prototype.pushPrev = function(expr) { 
+	this.prev.pushStd(expr);
+	var lastAdd = this.prev.lastAdd;
+	this.prev.lastAdd = this.prev.currAdd;
+	this.prev.currAdd = lastAdd;
+	this.push = this.pushStd; 
+};
+StackFrame.prototype.pushSwap = function(expr) { 
+	var end = this.expressionList.length - 1;
+	this.pushStd(this.expressionList[end]);
+	this.expressionList[end] = expr;
+	this.push = this.pushStd;
+};
+
+StackFrame.prototype.pushOperation = function(op) {
+	this.operationList.push(op);
+	(op.length > this.numExprReq && (this.numExprReq = op.length)) 
+	|| ++this.numExprReq;
+	this.lastAdd = this.currAdd;
+	this.currAdd = type.OP;
+};
+
 function genExpression(op,left,right) {
 	console.log(((op) ? op.name : op) + ', ' 
 	+ (left ? left.toString() : left) + ', ' 
@@ -196,44 +288,53 @@ function genExpression(op,left,right) {
 	return new Expression(op,left,right);
 }
 
-function getExpression(expressions,operations) {
+StackFrame.prototype.getExpression = function() {
 	console.log('Getting expression');
-	var opEnd = operations.length - 1;
-	var exprEnd = expressions.length - 1;
+	var opEnd = this.operationList.length - 1;
+	var exprEnd = this.expressionList.length - 1;
 	if(opEnd < 0) {
 		if(exprEnd < 0) return null;
-		else return expressions.pop();//this is a valid constant or t
+		else return this.expressionList.pop();//this is a valid constant or t
 	}
 	do {
-		var op = operations.pop(), left = undefined, right = undefined;
+		var op = this.operationList.pop(), left = undefined, right = undefined;
 		--opEnd;
 		for(var i = 0, args = op.length; i < args; ++i) {
 			if(exprEnd < 0) {
-				errString = "Not enough arguments for function: " + operations[opEnd];
+				errString = "Not enough arguments for function: " + this.operationList[opEnd].name;
 				return undefined;
 			}
-			var expr = expressions.pop();
+			var expr = this.expressionList.pop();
 			if(right) left  = expr;
 			else      right = expr;
 			--exprEnd;
 		}
-		expressions.push(genExpression(op,left,right));
+		this.expressionList.push(genExpression(op,left,right));
 		exprEnd++;
 	} while(opEnd >= 0);
-	return expressions.pop();
+	return this.expressionList.pop();
+}
+
+function printSubStack(subStack,exprNum) {
+	var str = '[';
+	for(var item in subStack) {
+		var curr = subStack[item];
+		str += (curr.hasOwnProperty('left') ? curr.toString() : curr.name) + ', ';
+	}
+	if (subStack.wait) str += subStack.wait + ' ';
+	str += ']';
+	str += (exprNum != undefined ? '(' + exprNum + ')' : '') + ', ';
+	return str;
 }
 
 function printStack(stack,depth) {
-	var str = '';
+	var exprStr = '', opStr = '';
 	for(var i = 0; i < depth + 1;i++) {
-		str += '[';
-		for(var thing in stack[i]) {
-			var curr = stack[i][thing];
-			str += (curr.hasOwnProperty('left') ? curr.toString() : curr.name) + ', ';
-		}
-		str += '], ';
+		exprStr += printSubStack(stack[i].expressionList);
+		opStr   += printSubStack(stack[i].operationList,stack[i].numExprReq);
 	}
-	console.log(str);
+	console.log(exprStr);
+	console.log(opStr);
 }
 
 function parseEquation(eqString) {
@@ -244,11 +345,8 @@ function parseEquation(eqString) {
 		errString = 'You must input an equation';
 		return undefined;
 	}
-	var expressionList = [[]];
-	var operationList = [[]];
+	var stack = [ new StackFrame() ];
 	var depth = 0;
-	var numExprReq = [0];
-	var lastOp = [];
 	while(eqString.length) {
 		//first expression present
 		//it matches each time because some results are dependent on others being processed
@@ -260,116 +358,85 @@ function parseEquation(eqString) {
 		expr = expr[0];
 		eqString = eqString.replace(finder_regex,'');
 		console.log('=> ' + expr + ', ' + eqString);
-		var currOp = undefined, num_present = false;
+		var currOp = opOrder.NONE, num_present = false;
 		if(expr[0] == '(' || expr[0] == '|') {
 			//if we're processing an abs, to close:
 			//one of the previous levels' last op must also be an abs
 			//and the number of required expressions in the current level must be satisfied
 			//otherwise, open a new one
-			if(expr[0] == '|' && depth && numExprReq[depth] <= expressionList[depth].length
-			&& lastOp.some(function(el) { return el == '|'; })) {
-				var absExpr = getExpression(expressionList[depth],operationList[depth]);
-				if(absExpr == undefined) return undefined;
+			if(expr[0] == '|' && depth && stack[depth].hasEnoughExprs()
+			&& stack.some(function(el) { return el.wait == '|'; })) {
+				var absExpr = stack.pop().getExpression();
 				depth--;
-				if(absExpr != null) expressionList[depth].push(genExpression(abs,absExpr,undefined));
+				stack[depth].wait = undefined;
+				if(absExpr == undefined) return undefined;
+				if(absExpr != null) stack[depth].pushExpression(genExpression(abs,absExpr,undefined));
 			}
 			else {
-				lastOp[depth] = expr[0];
+				stack[depth].wait = expr[0];
+				stack.push(new StackFrame(stack[depth]));
 				++depth;
-				lastOp[depth] = undefined;
-				expressionList[depth] = [];
-				operationList[depth] = [];
-				numExprReq[depth] = 0;
 			}
 		}
 		else if(expr[0] == ')') {
-			if(!depth || !lastOp.some(function(el) { return el == '('; })) {
+			if(!depth || !stack.some(function(el) { return el.wait == '('; })) {
 				errString = 'Closing ) found with no matching open (';
 				return undefined;
 			}
-			var parenExpr = getExpression(expressionList[depth],operationList[depth]);
-			if(parenExpr == undefined) return undefined;
+			var parenExpr = stack.pop().getExpression();
 			depth--;
-			if(parenExpr != null) expressionList[depth].push(parenExpr);
+			stack[depth].wait = undefined;
+			if(parenExpr == undefined) return undefined;
+			if(parenExpr != null) stack[depth].pushExpression(parenExpr);
 		}
-		else if(trig_regex.test(expr)) {
-			operationList[depth].push(trig_fns[expr]);
-			currOp = 'fn';
-			numExprReq[depth] = (trig_fns[expr].length > numExprReq[depth]) ? 
-				trig_fns[expr].length : numExprReq[depth] + 1;
-			
-		}
-		else if(log_regex.test(expr)) {
-			if(expr[1] == 'n') {
-				operationList[depth].push(ln);
-				numExprReq[depth] = (ln.length > numExprReq[depth]) ? 
-					ln.length : numExprReq[depth] + 1;
+		if(function_regex.test(expr)) {
+			stack.push(new StackFrame(stack[depth]));
+			depth++;
+			currOp = opOrder.FN;
+			if(trig_regex.test(expr)) {
+				stack[depth].pushOperation(trig_fns[expr]);
+				currOp = opOrder.TRIG;
 			}
-			else {
-				operationList[depth].push(log);
-				if(expr.length < 4)//there's no base specified
-					expressionList[depth].push(new Constant(10));
-				numExprReq[depth] = (log.length > numExprReq[depth]) ? 
-					log.length : numExprReq[depth] + 1;
-			}
-			currOp = 'fn';
-		}
-		else if(/(sqrt)/.test(expr)) {
-			operationList[depth].push(sqrt);
-			currOp = 'fn';
-			numExprReq[depth] = (sqrt.length > numExprReq[depth]) ? 
-					sqrt.length : numExprReq[depth] + 1;
-		}
-		else if(operator_regex.test(expr)) {
-			if((expr[0] == '+' || expr[0] == '-') 
-				&& numExprReq[depth] > expressionList[depth].length) {
-				expressionList[depth].push(new Constant(0));
-			}
-			if(expr[0] == '^' || expr[0] == 's') {
-				var trig_op;
-				if( lastOp[depth] == 'fn'
-					&& (trig_op = operationList[depth][operationList[depth].length - 1])
-					&& trig_fns.hasOwnProperty(trig_op.name) ) {
-					//special case for trig exponents; we have to swap the operations
-					//because the exponent would come second
-					//unfortunately, the way this works for trig^e(n) we end up with 
-					//(exp e (trig n)) instead of (exp (trig n) e)
-					//so this is broken right now
-					operationList[depth].push(trig_op);
-					operationList[depth][operationList[depth].length - 2] = exp;
-					currOp = 'fn';
-					lastOp[depth] = 'op';//for the swap to work
+			else if(log_regex.test(expr)) {
+				if(expr[1] == 'n') {
+					stack[depth].pushOperation(ln);
 				}
 				else {
-					operationList[depth].push(exp);
-					currOp = 'op';
+					stack[depth].pushOperation(log);
+					if(expr.length < 4)//there's no base specified
+						stack[depth].pushExpression(new Constant(10));
 				}
-				numExprReq[depth] = (exp.length > numExprReq[depth]) ? 
-					exp.length : numExprReq[depth] + 1;
+			}
+			else if(/(sqrt)/.test(expr)) {
+				stack[depth].pushOperation(sqrt);
+			}
+		}
+		else if(operator_regex.test(expr)) {
+			var op = undefined;
+			if(expr[0] == '^') {
+				if( stack[depth].lastOp == opOrder.TRIG ) {
+					//special case for trig exponents
+					stack[depth-1].pushOperation(exp);
+					stack[depth-1].push = stack[depth - 1].pushSwap;
+					stack[depth].push = stack[depth].pushPrev;
+				}
+				else { op = exp; }
 			}
 			else if(expr[0] == '*') {
-				operationList[depth].push(mul);
-				currOp = 'op';
-				numExprReq[depth] = (mul.length > numExprReq[depth]) ? 
-					mul.length : numExprReq[depth] + 1;
+				op = mul;
 			}
 			else if(expr[0] == '/') {
-				operationList[depth].push(div);
-				currOp = 'op';
-				numExprReq[depth] = (div.length > numExprReq[depth]) ? 
-					div.length : numExprReq[depth] + 1;
+				op = div;
 			}
 			else if(expr[0] == '+') {
-				operationList[depth].push(add);
-				currOp = 'op';
-				numExprReq[depth] = (add.length > numExprReq[depth]) ? 
-					add.length : numExprReq[depth] + 1;
+				op = add;
 			}
 			else if(expr[0] == '-') {
-				operationList[depth].push(sub);
-				currOp = 'op';
-				numExprReq[depth] = (sub.length > numExprReq[depth]) ? 
-					sub.length : numExprReq[depth] + 1;
+				op = sub;
+			}
+			if(op) { 
+				currOp = op.oo;
+				stack[depth].pushOperation(op); 
 			}
 		}
 		else if((num_present = number_regex.test(expr)) || /t/.test(expr)) {
@@ -381,52 +448,50 @@ function parseEquation(eqString) {
 				});
 			}
 			else { val = new T(); }
-			currOp = 'num';
-			var before = numExprReq[depth] < expressionList[depth].length;
-			var after;
-			expressionList[depth].push(val);
-			//this needs to be generalized for ALL non-operations
-			if(expressionList[depth].length > 1 
-			&& (after = numExprReq[depth] < expressionList[depth].length)
-			&& lastOp[depth] != 'op') {
-				//there's an implicit multiply
-				operationList[depth].push(mul);
-				if(before == after) currOp = 'op';
-				else                lastOp[depth] = 'op';
-				numExprReq[depth] = (mul.length > numExprReq[depth]) ? 
-					mul.length : numExprReq[depth] + 1;
-				//if we break order of operations, we need to step back
-				var numOps = operationList[depth].length;
-				if(after && numOps > 1 && operationList[depth][numOps - 2].oo < operationList[depth][numOps - 1].oo) {
-					expressionList[depth].pop();
-					eqString = expr + eqString;
-				}
-			}
+			stack[depth].pushExpression(val);
 		}
 		
 		//console.log(lastOp[depth] + ', ' + currOp);
-		var numOps = operationList[depth].length;
-		if( numOps > 1 &&
-			operationList[depth][numOps - 2].oo <= operationList[depth][numOps - 1].oo ) {
-			//we must evaluate an expression since we broke order of operations
-			var op = operationList[depth].pop();
-			expressionList[depth] = 
-				[ getExpression( expressionList[depth], operationList[depth] ) ];
-			operationList[depth] = [ op ];
-			numExprReq[depth] = op.length;
+		console.log(stack[depth].lastAdd + ', ' + stack[depth].currAdd);
+		if(((stack[depth].currAdd == type.OP && !stack[depth].expressionList.length) ||
+		    (stack[depth].lastAdd == type.OP && stack[depth].currAdd != type.EXPR)) 
+				&& stack[depth].operationList[stack[depth].operationList.length - 1] == sub) {
+			stack[depth].pushExpression(new Constant(0));
+			stack[depth].lastAdd = type.EXPR;
+			stack[depth].currAdd = type.OP;
 		}
-		lastOp[depth] = currOp;
-		printStack(expressionList,depth);
-		printStack(operationList,depth);
+		if( stack[depth].orderBroken() ) {
+			//we must evaluate an expression since we broke order of operations
+			console.log('Broke order');
+			var op = stack[depth].operationList.pop();
+			stack[depth].expressionList = [ stack[depth].getExpression() ];
+			stack[depth].operationList  = [ op ];
+			stack[depth].numExprReq = op.length;
+		}
+		else if ( stack[depth].functionReady() ) {
+			console.log('Completed function');
+			--depth;
+			stack[depth].pushExpression(stack.pop().getExpression());
+		}
+		//this runs into issues if chained more than 3 times
+		if(stack[depth].lastAdd == type.EXPR && stack[depth].currAdd != type.OP) {
+			stack[depth].pushOperation(mul);
+			stack[depth].lastAdd = type.OP;
+			stack[depth].currAdd = type.EXPR;
+		}
+		currOp && (stack[depth].lastOp = currOp);
+		console.log("Depth: " + depth);
+		console.log(stack[depth].lastAdd + ', ' + stack[depth].currAdd);
+		printStack(stack,depth);
 	}
 	if(depth > 0) {
-		errString = 'Open ' + lastOp[depth - 1] + ' found with no closure';
+		errString = 'Open ' + stack[depth - 1].wait + ' found with no close';
 		return undefined;
 	}
-	else if(numExprReq[depth] > expressionList[depth].length) {
+	else if(!stack[depth].hasEnoughExprs()) {
 		errString = 'Insufficient number of arguments';
 		return undefined;
 	}
-	var final_expr = getExpression(expressionList[depth],operationList[depth]);
+	var final_expr = stack[depth].getExpression();
 	return final_expr;
 }
