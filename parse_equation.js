@@ -1,5 +1,4 @@
 "use strict";
-
 /*
 -------------------------------------------------------------------------------------------
 NOTES AND EDGE CASES:
@@ -228,6 +227,9 @@ var StackFrame = function(prev) {
 	this.wait = undefined;//when entering (paren) or |abs|, this is set to the opening character while on the other stack
 };
 
+StackFrame.prototype.lastOperation = function(disp) {
+	return this.operationList[this.operationList.length - (disp || 1)];
+}
 StackFrame.prototype.hasEnoughExprs = function() {
 	return this.numExprReq <= this.expressionList.length
 }
@@ -236,7 +238,7 @@ StackFrame.prototype.isFunctionStack = function() {
 }
 StackFrame.prototype.orderBroken = function() {
 	var end = this.operationList.length - 1;
-	if(end > 0) console.log(this.operationList[end - 1].name + ', ' + this.operationList[end].name);
+	//if(end > 0) console.log(this.operationList[end - 1].name + ', ' + this.operationList[end].name);
 	return end > 0 && this.operationList[end - 1].oo <= this.operationList[end].oo;
 }
 StackFrame.prototype.functionReady = function() {
@@ -272,10 +274,20 @@ StackFrame.prototype.pushOperation = function(op) {
 	this.currAdd = type.OP;
 };
 
+function getSymbol(op) {
+	var str = '???';
+	if     (op == exp) str = '^';
+	else if(op == mul) str = '*';
+	else if(op == div) str = '/';
+	else if(op == add) str = '+';
+	else if(op == sub) str = '-';
+	else if(op && op.oo < opOrder.EXP) str = op.name;
+	return str;
+}
+
 function genExpression(op,left,right) {
-	console.log(((op) ? op.name : op) + ', ' 
-	+ (left ? left.toString() : left) + ', ' 
-	+ (right ? right.toString() : right));
+	//console.log(((op) ? op.name : op) + ', ' 
+	//+ (left ? left.toString() : left) + ', ' + (right ? right.toString() : right));
 	
 	if(!left)  left  = new Constant(0);
 	if(!right) right = new Constant(0);
@@ -289,7 +301,7 @@ function genExpression(op,left,right) {
 }
 
 StackFrame.prototype.getExpression = function() {
-	console.log('Getting expression');
+	//console.log('Getting expression');
 	var opEnd = this.operationList.length - 1;
 	var exprEnd = this.expressionList.length - 1;
 	if(opEnd < 0) {
@@ -301,7 +313,7 @@ StackFrame.prototype.getExpression = function() {
 		--opEnd;
 		for(var i = 0, args = op.length; i < args; ++i) {
 			if(exprEnd < 0) {
-				errString = "Not enough arguments for function: " + this.operationList[opEnd].name;
+				errString = "Not enough arguments for " + getSymbol(op);
 				return undefined;
 			}
 			var expr = this.expressionList.pop();
@@ -342,7 +354,7 @@ function parseEquation(eqString) {
 	//remove whitespace
 	eqString = eqString.replace(/\s+/g,'');
 	if(!eqString.length) {
-		errString = 'You must input an equation';
+		errString = 'Empty equation';
 		return undefined;
 	}
 	var stack = [ new StackFrame() ];
@@ -352,20 +364,20 @@ function parseEquation(eqString) {
 		//it matches each time because some results are dependent on others being processed
 		var expr = eqString.match(finder_regex);
 		if(!expr) {
-			errString = 'Invalid equation, there was an invalid term';
+			errString = 'There was an invalid term';
 			return undefined;
 		}
 		expr = expr[0];
 		eqString = eqString.replace(finder_regex,'');
-		console.log('=> ' + expr + ', ' + eqString);
+		//console.log('=> ' + expr + ', ' + eqString);
 		var currOp = opOrder.NONE, num_present = false;
 		if(expr[0] == '(' || expr[0] == '|') {
 			//if we're processing an abs, to close:
 			//one of the previous levels' last op must also be an abs
 			//and the number of required expressions in the current level must be satisfied
 			//otherwise, open a new one
-			if(expr[0] == '|' && depth && stack[depth].hasEnoughExprs()
-			&& stack.some(function(el) { return el.wait == '|'; })) {
+			if(expr[0] == '|' && depth && stack[depth].expressionList.length &&
+			stack[depth].hasEnoughExprs() && stack.some(function(el) { return el.wait == '|'; })) {
 				var absExpr = stack.pop().getExpression();
 				depth--;
 				stack[depth].wait = undefined;
@@ -380,7 +392,7 @@ function parseEquation(eqString) {
 		}
 		else if(expr[0] == ')') {
 			if(!depth || !stack.some(function(el) { return el.wait == '('; })) {
-				errString = 'Closing ) found with no matching open (';
+				errString = 'Closing ) found before (';
 				return undefined;
 			}
 			var parenExpr = stack.pop().getExpression();
@@ -452,24 +464,24 @@ function parseEquation(eqString) {
 		}
 		
 		//console.log(lastOp[depth] + ', ' + currOp);
-		console.log(stack[depth].lastAdd + ', ' + stack[depth].currAdd);
+		//console.log(stack[depth].lastAdd + ', ' + stack[depth].currAdd);
 		if(((stack[depth].currAdd == type.OP && !stack[depth].expressionList.length) ||
 		    (stack[depth].lastAdd == type.OP && stack[depth].currAdd != type.EXPR)) 
-				&& stack[depth].operationList[stack[depth].operationList.length - 1] == sub) {
+				&& stack[depth].lastOperation() == sub) {
 			stack[depth].pushExpression(new Constant(0));
 			stack[depth].lastAdd = type.EXPR;
 			stack[depth].currAdd = type.OP;
 		}
 		if( stack[depth].orderBroken() ) {
 			//we must evaluate an expression since we broke order of operations
-			console.log('Broke order');
+			//console.log('Broke order');
 			var op = stack[depth].operationList.pop();
 			stack[depth].expressionList = [ stack[depth].getExpression() ];
 			stack[depth].operationList  = [ op ];
 			stack[depth].numExprReq = op.length;
 		}
 		else if ( stack[depth].functionReady() ) {
-			console.log('Completed function');
+			//console.log('Completed function');
 			--depth;
 			stack[depth].pushExpression(stack.pop().getExpression());
 		}
@@ -480,18 +492,24 @@ function parseEquation(eqString) {
 			stack[depth].currAdd = type.EXPR;
 		}
 		currOp && (stack[depth].lastOp = currOp);
-		console.log("Depth: " + depth);
-		console.log(stack[depth].lastAdd + ', ' + stack[depth].currAdd);
-		printStack(stack,depth);
+		//console.log("Depth: " + depth);
+		//console.log(stack[depth].lastAdd + ', ' + stack[depth].currAdd);
+		//printStack(stack,depth);
 	}
 	if(depth > 0) {
-		errString = 'Open ' + stack[depth - 1].wait + ' found with no close';
+		if(stack[depth].isFunctionStack())
+			errString = 'Not enough arguments for ' + 
+			getSymbol(stack[depth].lastOperation());
+		else
+			errString = 'Open ' + stack[depth - 1].wait + ' found with no close';
 		return undefined;
 	}
 	else if(!stack[depth].hasEnoughExprs()) {
-		errString = 'Insufficient number of arguments';
+		errString = 'Not enough arguments for ' + 
+		getSymbol(stack[depth].lastOperation());
 		return undefined;
 	}
 	var final_expr = stack[depth].getExpression();
+	console.log(final_expr.toString());
 	return final_expr;
 }

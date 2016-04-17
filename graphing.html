@@ -3,8 +3,9 @@
 <head>
 <title>Parametric Graphing Utility</title>
 <style>
-html,body { width: 100%; height: 100%; margin: 0px; }
-form, input, p { font-family: consolas, monospace; font-size: 12pt; }
+html,body { width: 100%; height: 100%; margin: 0px; overflow: hidden; }
+form, input, p, li { font-family: consolas, monospace; font-size: 12pt; }
+ul { width: 85%; }
 form { 
 	position: fixed;
 	bottom: 20px;
@@ -18,16 +19,33 @@ input { padding: 5px; width: 300px; margin: 5px auto; }
 canvas { margin-left: 5px; margin-top: 5px; }
 
 #help { 
-	width: 40px;
-	height: 20px;
 	position: fixed;
-	bottom: 120px;
+	bottom: 30px;
 	right: 30px; 
 	margin: 0;
-	padding: 5px;
+	padding-top: 0px;
+	transition: all 0.25s;
 }
-#help > p { border: 1px solid black; }
-#help > div { margin-left: -100px; width: 200px; border: 1px solid black; }
+#label_help { 
+	padding: 10px 5px;
+	border: 1px solid black;
+	border-bottom: 1px solid white;
+	max-width: 80px;
+	text-align: center;
+	margin: 0px 20px -1px auto;/*top right bottom left*/
+	background-color: white;
+	position: relative;
+	font-size: 14pt;
+}
+#help > div { 
+	padding: 5px 0px;
+	padding-left: 20px;
+	border: 1px solid black;
+	max-width: 500px;
+	max-height: 300px;
+	background-color: white;
+	overflow-y: scroll;
+}
 </style>
 <script type="text/javascript" src="parse_equation.js"></script>
 <script>
@@ -38,7 +56,7 @@ var minBoundY, maxBoundY;
 var equation;
 var tUnits = 1000;
 var pixelsPerUnit = 20;
-var segmentsPerUnit = 5;
+var segmentsPerUnit = 25;
 
 var canvas, ctx;
 
@@ -92,19 +110,19 @@ function updateEquation() {
 function drawT(t,tn) {
 	var tx = equation.x.evaluate(t) * pixelsPerUnit
 	  , ty = equation.y.evaluate(t) * pixelsPerUnit;
-	if(Number.isNaN(tx) || Number.isNaN(ty) ||
+	if(Number.isNaN(tx) || Number.isNaN(ty) || 
 		abs(tx) > canvas.width / 2 || abs(ty) > canvas.height / 2)
 		return;
 	var bigNum = Number.MAX_VALUE;
-	!Number.isFinite(tx) && (tx = Math.sign(tx) * bigNum);
-	!Number.isFinite(ty) && (ty = Math.sign(ty) * bigNum);
+	!Number.isFinite(tx) && (tx = Math.sign(tx) * canvas.width/2);
+	!Number.isFinite(ty) && (ty = Math.sign(ty) * canvas.height/2);
 	
 	var txn = equation.x.evaluate(tn) * pixelsPerUnit
 	  , tyn = equation.y.evaluate(tn) * pixelsPerUnit;
 	(Number.isNaN(txn) && (txn = tx)) || 
-	(!Number.isFinite(txn) && (txn = Math.sign(txn) * bigNum));
+	(!Number.isFinite(txn) && (txn = Math.sign(txn) * canvas.width/2));
 	(Number.isNaN(tyn) && (tyn = ty)) || 
-	(!Number.isFinite(tyn) && (tyn = Math.sign(tyn) * bigNum));
+	(!Number.isFinite(tyn) && (tyn = Math.sign(tyn) * canvas.height/2));
 	
 	//console.log('(' + tx + ', ' + ty + '), (' + txn + ', ' + tyn + ')');
 	ctx.moveTo(tx, -ty);
@@ -149,7 +167,17 @@ function graphDraw() {
 	ctx.restore();
 }
 
-window.onload = graphSetup;
+window.onload = function() { 
+	var help = document.querySelector('#help')
+	, help_label = document.querySelector('#label_help');
+	var vertDisp = help_label.offsetHeight - help.offsetHeight - 1 + 'px';
+	help_label.onclick = function() {
+		if(help.style.bottom == vertDisp) { help.style.bottom = '30px'; }
+		else { help.style.bottom = vertDisp; }
+	};
+	document.querySelector('#label_help').onclick();
+	graphSetup(); 
+}
 window.onresize = function() { resize(); graphDraw(); };
 </script>
 
@@ -161,8 +189,68 @@ X(t) = <input type="text" id="x_eq" value="5(3.1cost-cos(3.1t))"><br>
 Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 </form>
 <div id="help">
-	<p>Help</p>
+	<p id="label_help">Help</p>
 	<div>
+	<p><b>Info</b></p>
+	<p>
+		Enter any parametric equation you'd like into the boxes on the left; 
+		hit enter or click outside the box to update the equation. 
+		If there is an issue with the equation you entered, 
+		an error message will appear on the top right of the page. 
+		You can cycle through old inputs with Ctrl+Z, and go back to newer ones with Ctrl+Y.
+	</p>
+	<p>
+		All numbers and the constants pi, phi, and e are accepted. 
+		The basic operations of ^, *, /, +, and - are recognized, as well as 
+		(), | | (absolute value), sqrt, 
+		all standard, inverse, and hyperbolic trig functions, ln, and log.
+	</p>
+	<p>
+		When raising a base to a negative power, wrap the exponent in parentheses. 
+		As normal, do the same when raising a negative base to any power.
+	</p>
+	<p>
+		log is written as log_[base][value]. (omit the brackets) 
+		If no base is specified, base 10 is assumed.
+	</p>
+	<p>
+		Trig functions support the traditional exponent syntax of [trig]^[exp][value]. 
+		However, the syntax [trig]^(-1)[value] for the inverse version of the trig function 
+		is not supported; you'll only get 1/[trig][value]. Instead, use a[trig] or arc[trig].
+	</p>
+	<p><b>Future</b></p>
+	<p>
+		The JS Math.pow function does not accept negative bases for fractional exponents 
+		(aka roots) and you won't be able to see the graph in areas that this applies. 
+		I may replace this function with one of my own later to fix this.
+	<p>
+	<p>
+		Functions with asymptotes that approach the opposite sign of infinity on each side 
+		will not draw correctly; a prominent example is (t, tan(t)). 
+		I'm not sure how to fix this in a way that doesn't mess up other equations, 
+		so I'm leaving it alone. I may implement an asymptote solver to help.
+	</p>
+	<p>
+		There is a minor parser bug where negative numbers that are exponents 
+		or arguments to a function will be evaluated as fn(0)-n instead of fn(-n). 
+		This can be avoided by wrapping the value in (), but the error is hard to differentiate 
+		from a standard () error. 
+		This is the last major parser bug, but I don't know if it will be fixed.
+	</p>
+	<p>I'd like to add the following features at some point in time:</p>
+	<ul>
+		<li>Variables connected to sliders for easy tweaks and experimentation</li>
+		<li>Asymptote visualization</li>
+		<li>Click on the graph, get the values for the nearest point on the curve</li>
+		<li>Polar and Cartesian equation support (long term)</li>
+		<li>3D graphs (very long term)</li>
+	</ul>
+	<p><b>Cool parametric curves:</b></p>
+	<p><em>Astroid:</em> x(t) = acos^3t, y(t) = asin^3t</p>
+	<p><em>Epicycloid:</em></p>
+	<p>x(t) = r((k+1)cost - cos((k+1)t)), </p>
+	<p>y(t) = r((k+1)sint - sin((k+1)t))</p>
+	<p>Values of interest: k = 1 (cardioid), 2.1
 	<p><a href="https://elepa.files.wordpress.com/2013/11/fifty-famous-curves.pdf">https://elepa.files.wordpress.com/2013/11/fifty-famous-curves.pdf</a></p>
 	</div>
 </div>
