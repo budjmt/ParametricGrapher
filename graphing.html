@@ -4,9 +4,18 @@
 <title>Parametric Graphing Utility</title>
 <style>
 html,body { width: 100%; height: 100%; margin: 0px; overflow: hidden; }
-form, input, p, li { font-family: consolas, monospace; font-size: 12pt; }
+form, input, p, li, #mouse_coords { font-family: consolas, monospace; font-size: 12pt; }
 ul { width: 85%; }
-form { 
+#mouse_coords {
+	position: fixed;
+	top: 20px;
+	left: 20px;
+	color: blue;
+	font-weight: bold;
+	white-space: pre;
+}
+
+#equations { 
 	position: fixed;
 	bottom: 20px;
 	left: 20px;
@@ -14,19 +23,22 @@ form {
 	background-color: white;
 	padding: 10px;
 }
-input { padding: 5px; width: 300px; margin: 5px auto; }
+input { padding: 5px; margin: 5px auto; }
+#equation input { width: 300px; }
 #error { position: fixed; top: 5px; right: 40px; color: red; font-size: 14pt; font-weight: bold; }
 canvas { margin-left: 5px; margin-top: 5px; }
 
-#help { 
+#help, #settings { 
 	position: fixed;
-	bottom: 30px;
+	bottom: 50px;
 	right: 30px; 
 	margin: 0;
 	padding-top: 0px;
 	transition: all 0.25s;
 }
-#label_help { 
+#settings { right: 150px; z-index: 1; }
+
+.label { 
 	padding: 10px 5px;
 	border: 1px solid black;
 	border-bottom: 1px solid white;
@@ -37,7 +49,9 @@ canvas { margin-left: 5px; margin-top: 5px; }
 	position: relative;
 	font-size: 14pt;
 }
-#help > div { 
+#settings .label { max-width: 100px; }
+
+#help > div, #settings > div { 
 	padding: 5px 0px;
 	padding-left: 20px;
 	border: 1px solid black;
@@ -46,17 +60,24 @@ canvas { margin-left: 5px; margin-top: 5px; }
 	background-color: white;
 	overflow-y: scroll;
 }
+
+#settings input { width: 50%; }
+#settings #color_r, #settings #color_g, #settings #color_b { width: 35px; }
+#settings #spu { width : 25%; }
 </style>
 <script type="text/javascript" src="parse_equation.js"></script>
 <script>
 var error;
 var graphX, x_val, graphY, y_val;
-var minBoundX, maxBoundX;
-var minBoundY, maxBoundY;
 var equation;
 var tUnits = 1000;
 var pixelsPerUnit = 20;
-var segmentsPerUnit = 25;
+var samplesPerUnit = 25;
+var unitsPerNotch = 1;
+var curveColor = { r: 0, g: 0, b: 0 };
+
+var t_range, ppu, spu, upn, curve_r, curve_g, curve_b;
+var mouseCoords;
 
 var canvas, ctx;
 
@@ -69,36 +90,62 @@ function graphSetup() {
 
 	error = document.querySelector('#error');
 	
-	maxBoundX = 100; minBoundX = -maxBoundX;
-	maxBoundY = 100; minBoundY = -maxBoundY;
 	graphX = document.querySelector("#x_eq");
 	graphY = document.querySelector("#y_eq");
 	graphX.onchange = updateEquation;
 	graphY.onchange = updateEquation;
+	
+	t_range = document.querySelector('#t_range');
+	spu = document.querySelector('#spu');
+	ppu = document.querySelector('#ppu');
+	upn = document.querySelector('#upn');
+	color_r = document.querySelector('#color_r');
+	color_g = document.querySelector('#color_g');
+	color_b = document.querySelector('#color_b');
+	
+	function tryParse(str) {
+		var val = Number.parseFloat(str);
+		if(Number.isNaN(val)) { val = undefined; errString = 'Invalid setting'; }
+		updateError(val);
+		return val;
+	};
+	
+	t_range.value = tUnits;
+	t_range.onchange = function() { var val = tryParse(this.value); tUnits = (val != undefined && val) || tUnits; graphDraw(); };
+	spu.value = samplesPerUnit;
+	spu.onchange = function() { var val = tryParse(this.value); samplesPerUnit = (val != undefined && val) || samplesPerUnit; graphDraw(); };
+	ppu.value = pixelsPerUnit;
+	ppu.onchange = function() { var val = tryParse(this.value); pixelsPerUnit = (val != undefined && val) || pixelsPerUnit; graphDraw(); };
+	upn.value = unitsPerNotch;
+	upn.onchange = function() { var val = tryParse(this.value); unitsPerNotch = (val != undefined && val) || unitsPerNotch; graphDraw(); };
+	color_r.value = curveColor.r;
+	color_r.onchange = function() { var val = tryParse(this.value); if (val != undefined) curveColor.r = val | 0; graphDraw(); };
+	color_g.value = curveColor.g;
+	color_g.onchange = function() { var val = tryParse(this.value); if (val != undefined) curveColor.g = val | 0; graphDraw(); };
+	color_b.value = curveColor.b;
+	color_b.onchange = function() { var val = tryParse(this.value); if (val != undefined) curveColor.b = val | 0; graphDraw(); };
+	
 	equation = {};
 	updateEquation();
+}
+
+function updateError(val) {
+	if(val == undefined) error.innerHTML = 'ERROR: ' + errString;
+	else 	 error.innerHTML = '';
 }
 
 function parseEquations(x_eq, y_eq) {
 	if(x_val != x_eq) {
 		x_val = x_eq;
 		equation.x = parseEquation(x_eq);
-		if(!equation.x) {
-			error.innerHTML = 'ERROR: ' + errString;
-			return;
-		}
-		else
-			error.innerHTML = '';
+		updateError(equation.x);
+		if(!equation.x)	return;
 	}
 	if(y_val != y_eq) {
 		y_val = y_eq;
 		equation.y = parseEquation(y_eq);
-		if(!equation.y) {
-			error.innerHTML = 'ERROR: ' + errString;
-			return;
-		}
-		else
-			error.innerHTML = '';
+		updateError(equation.y);
+		if(!equation.y) return;
 	}
 } 
 
@@ -140,21 +187,21 @@ function graphDraw() {
 	ctx.stroke();
 	
 	ctx.save();
+	ctx.strokeStyle = 'rgb(' + curveColor.r + ',' + curveColor.g + ',' + curveColor.b + ')';
 	ctx.translate(canvas.width/2,canvas.height/2);
 	
-	var unitsPerMarker = 1;
-	for(var notches = canvas.width / pixelsPerUnit / unitsPerMarker, i = 0; i < notches; i++) {
+	for(var notches = canvas.width / pixelsPerUnit / unitsPerNotch, i = 0; i < notches; i++) {
 		var pos = canvas.width * i / notches;
 		ctx.moveTo(pos,-5); ctx.lineTo(pos,5); ctx.stroke();
 		ctx.moveTo(-pos,-5); ctx.lineTo(-pos,5); ctx.stroke();
 	}
-	for(var notches = canvas.height / pixelsPerUnit / unitsPerMarker, i = 0; i < notches; i++) {
+	for(var notches = canvas.height / pixelsPerUnit / unitsPerNotch, i = 0; i < notches; i++) {
 		var pos = canvas.height * i / notches;
 		ctx.moveTo(-5,pos); ctx.lineTo(5,pos); ctx.stroke();
 		ctx.moveTo(-5,-pos); ctx.lineTo(5,-pos); ctx.stroke();
 	}
 	if(equation.x && equation.y) {
-		var tUpS = 1 / segmentsPerUnit;
+		var tUpS = 1 / samplesPerUnit;
 		for(var t = 0.000001, end = tUnits - tUpS; t < end; t += tUpS) {
 			drawT(t,(t+tUpS));
 		}
@@ -168,30 +215,67 @@ function graphDraw() {
 }
 
 window.onload = function() { 
-	var help = document.querySelector('#help')
-	, help_label = document.querySelector('#label_help');
-	var vertDisp = help_label.offsetHeight - help.offsetHeight - 1 + 'px';
-	help_label.onclick = function() {
-		if(help.style.bottom == vertDisp) { help.style.bottom = '30px'; }
-		else { help.style.bottom = vertDisp; }
+	var boxes = [ 
+		  { box: document.querySelector('#settings') } 
+		, { box: document.querySelector('#help') }
+	];
+	for(var i = 0; i < boxes.length; i++) (function(i) {
+		boxes[i].label = boxes[i].box.querySelector('.label');
+		boxes[i].vertDisp = boxes[i].label.offsetHeight - boxes[i].box.offsetHeight - 1 + 'px';
+		boxes[i].label.onclick = function(e) { e && e.stopPropagation(); (function(i) {
+			if(boxes[i].box.style.bottom == boxes[i].vertDisp) { boxes[i].box.style.bottom = '50px'; }
+			else { boxes[i].box.style.bottom = boxes[i].vertDisp; }
+			boxes.forEach(function(el,j) { i != j && (boxes[j].box.style.bottom = el.vertDisp); });
+		})(i); };
+	})(i);
+	boxes.forEach(function(el,i) { boxes[i].label.onclick(); });
+	boxes[boxes.length-1].label.onclick();
+	graphSetup();
+	canvas.onclick = function() { 
+		boxes.forEach(function(el,j) { boxes[j].box.style.bottom = el.vertDisp; }); 
 	};
-	document.querySelector('#label_help').onclick();
-	graphSetup(); 
+	
+	mouseCoords = document.querySelector('#mouse_coords');
 }
+
 window.onresize = function() { resize(); graphDraw(); };
+window.onmousemove = function(e) { 
+	var mouseX =  (e.pageX - window.innerWidth  / 2) / pixelsPerUnit
+	  , mouseY = -(e.pageY - window.innerHeight / 2) / pixelsPerUnit;
+	mouseCoords.innerHTML = ((mouseX > 0) ? ' ' : '') + mouseX.toFixed(3) + ', ' 
+						  + ((mouseY > 0) ? ' ' : '') + mouseY.toFixed(3); 
+}
 </script>
 
 </head>
 <body>
 <canvas></canvas>
-<form>
+<div id="mouse_coords"></div>
+<form id="equations">
 X(t) = <input type="text" id="x_eq" value="5(3.1cost-cos(3.1t))"><br>
 Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 </form>
-<div id="help">
-	<p id="label_help">Help</p>
+<div id="settings">
+	<p class="label">Settings</p>
 	<div>
-	<p><b>Info</b></p>
+	<form>
+	<p><em>t</em>-range: &#177; <input type="text" id="t_range"></p>
+	<p>Samples per Unit: <input type="text" id="spu"></p>
+	<p>Pixels per Unit: <input type="text" id="ppu"></p>
+	<p>Units per Notch: <input type="text" id="upn"></p>
+	<p>Curve Color: </p>
+	<p>
+		R: <input type="text" id="color_r">
+		G: <input type="text" id="color_g">
+		B: <input type="text" id="color_b">
+	</p>
+	</form>
+	</div>
+</div>
+<div id="help">
+	<p class="label">Help</p>
+	<div>
+	<p><b>Equation Info</b></p>
 	<p>
 		Enter any parametric equation you'd like into the boxes on the left; 
 		hit enter or click outside the box to update the equation. 
@@ -218,6 +302,16 @@ Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 		However, the syntax [trig]^(-1)[value] for the inverse version of the trig function 
 		is not supported; you'll only get 1/[trig][value]. Instead, use a[trig] or arc[trig].
 	</p>
+	<p><b>Other Info</b></p>
+	<p>The numbers in the top left corner are the grid-coordinates of your mouse.</p>
+	<p>
+		In the settings menu, you can change 
+		<b>t-range</b>, which is the values sampled when drawing the curve, 
+		<b>samples per unit</b>, which determines the value (1 / SPU) t is incrmented by, 
+		<b>pixels per unit</b>, which is exactly what it sounds like, 
+		<b>units per notch</b>, which controls the number of units each notch on the axes represents, 
+		and <b>curve color</b>, which changes the color of the graph.
+	</p>
 	<p><b>Future</b></p>
 	<p>
 		The JS Math.pow function does not accept negative bases for fractional exponents 
@@ -231,8 +325,9 @@ Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 		so I'm leaving it alone. I may implement an asymptote solver to help.
 	</p>
 	<p>
-		There is a minor parser bug where negative numbers that are exponents 
+		There is a minor parser bug where negative numbers as the second argument of *, /, or ^ 
 		or arguments to a function will be evaluated as fn(0)-n instead of fn(-n). 
+		(*0, /0, and ^0 for the operators) 
 		This can be avoided by wrapping the value in (), but the error is hard to differentiate 
 		from a standard () error. 
 		This is the last major parser bug, but I don't know if it will be fixed.
