@@ -70,13 +70,14 @@ canvas { margin-left: 5px; margin-top: 5px; }
 var error;
 var graphX, x_val, graphY, y_val;
 var equation;
-var tUnits = 1000;
+var tBoundUpper = 1000;
+var tBoundLower = -1000;
 var pixelsPerUnit = 20;
-var samplesPerUnit = 25;
-var unitsPerNotch = 1;
+var stepsPerUnit = 25;
+var unitsPerNotch = 5;
 var curveColor = { r: 0, g: 0, b: 0 };
 
-var t_range, ppu, spu, upn, curve_r, curve_g, curve_b;
+var t_range_lower, t_range_upper, ppu, spu, upn, curve_r, curve_g, curve_b;
 var mouseCoords;
 
 var canvas, ctx;
@@ -95,7 +96,8 @@ function graphSetup() {
 	graphX.onchange = updateEquation;
 	graphY.onchange = updateEquation;
 	
-	t_range = document.querySelector('#t_range');
+	t_range_lower = document.querySelector('#t_range_lower');
+	t_range_upper = document.querySelector('#t_range_upper');
 	spu = document.querySelector('#spu');
 	ppu = document.querySelector('#ppu');
 	upn = document.querySelector('#upn');
@@ -110,10 +112,29 @@ function graphSetup() {
 		return val;
 	};
 	
-	t_range.value = tUnits;
-	t_range.onchange = function() { var val = tryParse(this.value); tUnits = (val != undefined && val) || tUnits; graphDraw(); };
-	spu.value = samplesPerUnit;
-	spu.onchange = function() { var val = tryParse(this.value); samplesPerUnit = (val != undefined && val) || samplesPerUnit; graphDraw(); };
+	function tryParseEq(str) {
+		var val = parseEquation(str);
+		if(val.value == undefined) { val = undefined; errString = 'You cannot use t in a setting'; }
+		else val = val.value;
+		if(Number.isNaN(val)) { val = undefined; errString = 'Invalid setting'; }
+		updateError(val);
+		return val;
+	};
+	
+	function confirmTRange() {
+		if(tBoundLower < tBoundUpper)
+			return true;
+		errString = "The range for t is not valid";
+		updateError(undefined);
+		return false;
+	}
+	
+	t_range_lower.value = tBoundLower;
+	t_range_upper.value = tBoundUpper;
+	t_range_lower.onchange = function() { var val = tryParseEq(this.value); tBoundLower = (val != undefined) ? val : tBoundLower; confirmTRange() && graphDraw(); };
+	t_range_upper.onchange = function() { var val = tryParseEq(this.value); tBoundUpper = (val != undefined) ? val : tBoundUpper; confirmTRange() && graphDraw(); };
+	spu.value = stepsPerUnit;
+	spu.onchange = function() { var val = tryParse(this.value); stepsPerUnit = (val != undefined && val) || stepsPerUnit; graphDraw(); };
 	ppu.value = pixelsPerUnit;
 	ppu.onchange = function() { var val = tryParse(this.value); pixelsPerUnit = (val != undefined && val) || pixelsPerUnit; graphDraw(); };
 	upn.value = unitsPerNotch;
@@ -167,9 +188,9 @@ function drawT(t,tn) {
 	var txn = equation.x.evaluate(tn) * pixelsPerUnit
 	  , tyn = equation.y.evaluate(tn) * pixelsPerUnit;
 	(Number.isNaN(txn) && (txn = tx)) || 
-	(!Number.isFinite(txn) && (txn = Math.sign(txn) * canvas.width/2));
+	((!Number.isFinite(txn) || abs(txn) > canvas.width / 2) && (txn = Math.sign(txn) * canvas.width/2));
 	(Number.isNaN(tyn) && (tyn = ty)) || 
-	(!Number.isFinite(tyn) && (tyn = Math.sign(tyn) * canvas.height/2));
+	((!Number.isFinite(tyn) || abs(tyn) > canvas.height / 2) && (tyn = Math.sign(tyn) * canvas.height/2));
 	
 	//console.log('(' + tx + ', ' + ty + '), (' + txn + ', ' + tyn + ')');
 	ctx.moveTo(tx, -ty);
@@ -179,17 +200,19 @@ function drawT(t,tn) {
 function graphDraw() {
 	ctx.clearRect(0,0,canvas.width,canvas.height);
 	ctx.beginPath();
+	ctx.strokeStyle = 'black';
 	ctx.moveTo(0, canvas.height / 2);
 	ctx.lineTo(canvas.width, canvas.height / 2);
 	ctx.stroke();
 	ctx.moveTo(canvas.width / 2, 0);
 	ctx.lineTo(canvas.width / 2, canvas.height);
 	ctx.stroke();
+	ctx.closePath();
 	
 	ctx.save();
-	ctx.strokeStyle = 'rgb(' + curveColor.r + ',' + curveColor.g + ',' + curveColor.b + ')';
+	ctx.beginPath();
+	ctx.strokeStyle = 'black';
 	ctx.translate(canvas.width/2,canvas.height/2);
-	
 	for(var notches = canvas.width / pixelsPerUnit / unitsPerNotch, i = 0; i < notches; i++) {
 		var pos = canvas.width * i / notches;
 		ctx.moveTo(pos,-5); ctx.lineTo(pos,5); ctx.stroke();
@@ -200,16 +223,24 @@ function graphDraw() {
 		ctx.moveTo(-5,pos); ctx.lineTo(5,pos); ctx.stroke();
 		ctx.moveTo(-5,-pos); ctx.lineTo(5,-pos); ctx.stroke();
 	}
+	ctx.closePath();
 	if(equation.x && equation.y) {
-		var tUpS = 1 / samplesPerUnit;
-		for(var t = 0.000001, end = tUnits - tUpS; t < end; t += tUpS) {
-			drawT(t,(t+tUpS));
+		ctx.strokeStyle = 'rgb(' + curveColor.r + ',' + curveColor.g + ',' + curveColor.b + ')';
+		var tUpS = 1 / stepsPerUnit;
+		ctx.beginPath();
+		for(var t = ((tBoundLower > 0) ? tBoundLower : 0)
+		, end = tBoundUpper - tUpS; t < end; t += tUpS) {
+			drawT(t,t+tUpS);
 		}
 		ctx.stroke();
-		for(var t = 0.000001, end = tUnits - tUpS; t < end; t += tUpS) {
-			drawT(-t,-(t+tUpS));
+		ctx.closePath();
+		ctx.beginPath();
+		for(var t = ((tBoundUpper < 0) ? tBoundUpper : 0)
+		, end = tBoundLower + tUpS; t > end; t -= tUpS) {
+			drawT(t,t-tUpS);
 		}
 		ctx.stroke();
+		ctx.closePath();
 	}	
 	ctx.restore();
 }
@@ -259,10 +290,14 @@ Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 	<p class="label">Settings</p>
 	<div>
 	<form>
-	<p><em>t</em>-range: &#177; <input type="text" id="t_range"></p>
-	<p>Samples per Unit: <input type="text" id="spu"></p>
-	<p>Pixels per Unit: <input type="text" id="ppu"></p>
-	<p>Units per Notch: <input type="text" id="upn"></p>
+	<p>t-range: </p>
+	<p><input type="text" id="t_range_lower"> to <input type="text" id="t_range_upper"></p>
+	<p>Steps per Unit: </p>
+	<p><input type="text" id="spu"></p>
+	<p>Zoom (Pixels per Unit): </p>
+	<p><input type="text" id="ppu"></p>
+	<p>Units per Notch: </p>
+	<p><input type="text" id="upn"></p>
 	<p>Curve Color: </p>
 	<p>
 		R: <input type="text" id="color_r">
@@ -275,6 +310,7 @@ Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 <div id="help">
 	<p class="label">Help</p>
 	<div>
+	<p style="float: right; margin-right: 20px;"><b>v.0.97</b></p>
 	<p><b>Equation Info</b></p>
 	<p>
 		Enter any parametric equation you'd like into the boxes on the left; 
@@ -286,8 +322,9 @@ Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 	<p>
 		All numbers and the constants pi, phi, and e are accepted. 
 		The basic operations of ^, *, /, +, and - are recognized, as well as 
-		(), | | (absolute value), sqrt, 
-		all standard, inverse, and hyperbolic trig functions, ln, and log.
+		(), | | (absolute value), sign, sqrt, 
+		all standard, inverse, and hyperbolic trig functions, ln, log, 
+		and the Heaviside step function.
 	</p>
 	<p>
 		When raising a base to a negative power, wrap the exponent in parentheses. 
@@ -306,9 +343,9 @@ Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 	<p>The numbers in the top left corner are the grid-coordinates of your mouse.</p>
 	<p>
 		In the settings menu, you can change 
-		<b>t-range</b>, which is the values sampled when drawing the curve, 
-		<b>samples per unit</b>, which determines the value (1 / SPU) t is incrmented by, 
-		<b>pixels per unit</b>, which is exactly what it sounds like, 
+		<b>t-range</b>, which is the range of values stepped through when drawing the curve, 
+		<b>steps per unit</b>, which determines the value (1 / SPU) t is incremented by, 
+		<b>zoom (pixels per unit)</b>, which is exactly what it sounds like, 
 		<b>units per notch</b>, which controls the number of units each notch on the axes represents, 
 		and <b>curve color</b>, which changes the color of the graph.
 	</p>
@@ -324,19 +361,12 @@ Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 		I'm not sure how to fix this in a way that doesn't mess up other equations, 
 		so I'm leaving it alone. I may implement an asymptote solver to help.
 	</p>
-	<p>
-		There is a minor parser bug where negative numbers as the second argument of *, /, or ^ 
-		or arguments to a function will be evaluated as fn(0)-n instead of fn(-n). 
-		(*0, /0, and ^0 for the operators) 
-		This can be avoided by wrapping the value in (), but the error is hard to differentiate 
-		from a standard () error. 
-		This is the last major parser bug, but I don't know if it will be fixed.
-	</p>
 	<p>I'd like to add the following features at some point in time:</p>
 	<ul>
 		<li>Variables connected to sliders for easy tweaks and experimentation</li>
 		<li>Asymptote visualization</li>
 		<li>Click on the graph, get the values for the nearest point on the curve</li>
+		<li>Error highlighting</li>
 		<li>Polar and Cartesian equation support (long term)</li>
 		<li>3D graphs (very long term)</li>
 	</ul>
@@ -345,8 +375,31 @@ Y(t) = <input type="text" id="y_eq" value="5(3.1sint-sin(3.1t))">
 	<p><em>Epicycloid:</em></p>
 	<p>x(t) = r((k+1)cost - cos((k+1)t)), </p>
 	<p>y(t) = r((k+1)sint - sin((k+1)t))</p>
-	<p>Values of interest: k = 1 (cardioid), 2.1
+	<p>Values of interest: k = 1 (cardioid), 2.1, 3.8, 5.5, 7.2, pi</p>
+	<p><em>Hypocycloid:</em></p>
+	<p>x(t) = r((k-1)cost + cos((k-1)t)), </p>
+	<p>y(t) = r((k-1)sint - sin((k-1)t))</p>
+	<p>Values of interest: k = 3 (deltoid), 4 (astroid), 2.1, 3.8, 5.5, 7.2</p>
+	<p><em>Conchoid</em></p>
+	<p>x(t) = a + cost</p>
+	<p>y(t) = atant + sint</p>
+	<p>Values of interest: 0 < a < 1, a = 0, 1, -1</p>
+	<p><em>Folium of Descartes</em></p>
+	<p>x(t) = 3at/(1 + t^3)</p>
+	<p>y(t) = 3at^2/(1 + t^3)</p>
+	<p><em>Involute of a Circle</em></p>
+	<p>x(t) = a(cost + tsint)</p>
+	<p>y(t) = a(sint - tcost)</p>
+	<p><em>Plateau Curves</em></p>
+	<p>x(t) = asin((m+n)t)/sin((m-n)t)</p>
+	<p>y(t) = 2asin(mt)sin(nt)/sin((m-n)t)</p>
+	<p><em>Talbot's Curve</em></p>
+	<p>x(t) = (a^2 + f^2sin^2t)cost / a</p>
+	<p>y(t) = (a^2 - 2f^2 + f^2sin^2t)sint / b</p>
 	<p><a href="https://elepa.files.wordpress.com/2013/11/fifty-famous-curves.pdf">https://elepa.files.wordpress.com/2013/11/fifty-famous-curves.pdf</a></p>
+	<p><b>Source Code</b></p>
+	<p>Right-click on a &lt;div&gt;, open the console with F12, or go to: </p>
+	<p><a href="https://github.com/budjmt/ParametricGrapher">https://github.com/budjmt/ParametricGrapher</a></p>
 	</div>
 </div>
 <p id="error"></p>

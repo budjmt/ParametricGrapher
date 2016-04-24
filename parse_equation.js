@@ -20,6 +20,7 @@ NOTES AND EDGE CASES:
 		- The logarithmic function, as well as the natural log (ln)
 		- The absolute value function, |a + b|
 		- sqrt(val) as a short-hand for (val)^(1/2)
+		- Heaviside step function (marked H)
 	- Some functions that are not included:
 		- gradient
 		- gamma, zeta
@@ -111,11 +112,11 @@ var errString = '';//used for error handling
 
 var opOrder = {
 	NONE : undefined,
-	FN   :  0.1,
-	TRIG :  0.5,
-	EXP  :  1,
+	SUM  :  1,
 	PROD :  2,
-	SUM  :  3
+	EXP  :  3,
+	FN   :  4,
+	TRIG :  4.5
 };
 Object.seal(opOrder);
 Function.prototype.oo = opOrder.NONE;
@@ -136,7 +137,7 @@ var number_regex_str = '(' + number + '|' + constant + ')';
 
 var log_regex_str = '(log_?|ln)';//if no base is included, it's assumed to be 10
 var trig_regex_str = '((a|arc)?((cos)|(sin)|(tan)|(sec)|(csc)|(cot))h?)';
-var function_regex_str = '(^' + trig_regex_str + '|^' + log_regex_str + '|^(sqrt))';
+var function_regex_str = '(^' + trig_regex_str + '|^' + log_regex_str + '|^(sqrt)|^(sign)|^(H))';
 
 var add_regex = '(\\+|-)';
 var mul_regex = '(\\*|\\/)';
@@ -186,6 +187,9 @@ function log(base,val) { return Math.log(val) / Math.log(base); } log.oo = opOrd
 function ln(a) { return Math.log(a); } ln.oo = opOrder.FN;
 
 function abs(a) { return Math.abs(a); } abs.oo = opOrder.FN;
+function sign(a) { return Math.sign(a); } sign.oo = opOrder.FN;
+// Heaviside step function
+function H(a) { return (a > 0) ? 1 : ((a < 0) ? 0 : 0.5); } H.oo = opOrder.FN;
 
 var Expression = function(op,a,b) {
 	this.operation = op;
@@ -224,6 +228,7 @@ var StackFrame = function(prev) {
 	this.numExprReq = 0;// tracks the 
 	this.push = this.pushStd;
 	this.prev = prev;
+	this.unary = false;
 	this.wait = undefined;//when entering (paren) or |abs|, this is set to the opening character while on the other stack
 };
 
@@ -234,18 +239,45 @@ StackFrame.prototype.hasEnoughExprs = function() {
 	return this.numExprReq <= this.expressionList.length
 }
 StackFrame.prototype.isFunctionStack = function() {
-	return this.lastOp < opOrder.EXP;
+	return this.operationList.length && this.operationList[0].oo > opOrder.EXP;
 }
 StackFrame.prototype.orderBroken = function() {
 	var end = this.operationList.length - 1;
 	//if(end > 0) console.log(this.operationList[end - 1].name + ', ' + this.operationList[end].name);
-	return end > 0 && this.operationList[end - 1].oo <= this.operationList[end].oo;
+	//the first set are right associative, the rest are left
+	return end > 0 && !this.unary && 
+	(((this.operationList[end].oo == opOrder.EXP)
+		&& this.operationList[end].oo < this.operationList[end - 1].oo) ||
+	(this.operationList[end].oo <= this.operationList[end - 1].oo));
 }
 StackFrame.prototype.functionReady = function() {
-	return this.isFunctionStack() && this.argsAdded >= this.operationList[0].length;
+	return !this.unary && this.isFunctionStack() && this.argsAdded >= this.operationList[0].length;
 }
 
-StackFrame.prototype.pushExpression = function(expr) { this.push(expr); };
+StackFrame.prototype.pushExpression = function(expr) { 
+	this.push(expr); 
+	if(this.unary) { 
+		if(this.currAdd == type.EXPR) {
+			var right = this.expressionList.pop();
+			var expr = genExpression(this.operationList.pop(), this.expressionList.pop(), right);
+			this.unary = false;
+			this.pushExpression(expr);
+			this.lastAdd = type.OP;
+			this.currAdd = type.EXPR;
+			this.numExprReq = 0;
+			var t = this;
+			this.operationList.forEach(function(op) { 
+				(op.length > t.numExprReq && (t.numExprReq = op.length)) 
+				|| ++t.numExprReq;
+			});
+		}
+		else {
+			errString = "Too many operations in a row";
+			return undefined;
+		}
+	}
+	return true;
+};
 StackFrame.prototype.pushStd  = function(expr) { 
 	this.expressionList.push(expr); 
 	++this.argsAdded;
@@ -253,16 +285,22 @@ StackFrame.prototype.pushStd  = function(expr) {
 	this.currAdd = type.EXPR;
 };
 StackFrame.prototype.pushPrev = function(expr) { 
-	this.prev.pushStd(expr);
-	var lastAdd = this.prev.lastAdd;
-	this.prev.lastAdd = this.prev.currAdd;
-	this.prev.currAdd = lastAdd;
+	this.prev.expressionList.push(expr); 
+	++this.prev.argsAdded;
 	this.push = this.pushStd; 
 };
 StackFrame.prototype.pushSwap = function(expr) { 
 	var end = this.expressionList.length - 1;
-	this.pushStd(this.expressionList[end]);
+	this.expressionList.push(this.expressionList[end]);
+	++this.argsAdded;
 	this.expressionList[end] = expr;
+	if(this.lastAdd == type.EXPR) {
+		var opEnd = this.operationList.length - 1;
+		this.operationList.push(this.operationList[opEnd]);
+		this.operationList[opEnd] = mul;
+	}
+	this.lastAdd = this.currAdd;
+	this.currAdd = type.EXPR;
 	this.push = this.pushStd;
 };
 
@@ -281,7 +319,7 @@ function getSymbol(op) {
 	else if(op == div) str = '/';
 	else if(op == add) str = '+';
 	else if(op == sub) str = '-';
-	else if(op && op.oo < opOrder.EXP) str = op.name;
+	else if(op && op.oo > opOrder.EXP) str = op.name;
 	return str;
 }
 
@@ -300,7 +338,47 @@ function genExpression(op,left,right) {
 	return new Expression(op,left,right);
 }
 
-StackFrame.prototype.getExpression = function() {
+StackFrame.prototype.getExpression = function(opAdded) {
+	//console.log('Getting expression');
+	var opEnd = this.operationList.length - 1;
+	var exprEnd = this.expressionList.length - 1;
+	if(opEnd < 0) {
+		if(exprEnd < 0) return null;
+		else //return this.expressionList.pop();//this is a valid constant or t
+			return true;
+	}
+	do {
+		var op = this.operationList.pop(), left = undefined, right = undefined;
+		--opEnd;
+		for(var i = 0, args = op.length; i < args; ++i) {
+			if(exprEnd < 0) {
+				errString = "Not enough arguments for " + getSymbol(op);
+				return undefined;
+			}
+			var expr = this.expressionList.pop();
+			if(right) left  = expr;
+			else      right = expr;
+			--exprEnd;
+		}
+		this.expressionList.push(genExpression(op,left,right));
+		exprEnd++;
+		
+		this.operationList.push(opAdded);
+		var unordered = this.orderBroken();
+		this.operationList.pop();
+	
+	} while(opEnd >= 0 && unordered);
+	//return this.expressionList.pop();
+	this.numExprReq = 0;
+	var t = this;
+	this.operationList.forEach(function(op) { 
+		(op.length > t.numExprReq && (t.numExprReq = op.length)) 
+		|| ++t.numExprReq;
+	});
+	return true;
+}
+
+StackFrame.prototype.getCompleteExpression = function() {
 	//console.log('Getting expression');
 	var opEnd = this.operationList.length - 1;
 	var exprEnd = this.expressionList.length - 1;
@@ -378,11 +456,13 @@ function parseEquation(eqString) {
 			//otherwise, open a new one
 			if(expr[0] == '|' && depth && stack[depth].expressionList.length &&
 			stack[depth].hasEnoughExprs() && stack.some(function(el) { return el.wait == '|'; })) {
-				var absExpr = stack.pop().getExpression();
+				var absExpr = stack.pop().getCompleteExpression();
 				depth--;
 				stack[depth].wait = undefined;
 				if(absExpr == undefined) return undefined;
-				if(absExpr != null) stack[depth].pushExpression(genExpression(abs,absExpr,undefined));
+				if(absExpr != null) 
+					if(!stack[depth].pushExpression(genExpression(abs,absExpr,undefined)))
+						return undefined;
 			}
 			else {
 				stack[depth].wait = expr[0];
@@ -395,11 +475,13 @@ function parseEquation(eqString) {
 				errString = 'Closing ) found before (';
 				return undefined;
 			}
-			var parenExpr = stack.pop().getExpression();
+			var parenExpr = stack.pop().getCompleteExpression();
 			depth--;
 			stack[depth].wait = undefined;
 			if(parenExpr == undefined) return undefined;
-			if(parenExpr != null) stack[depth].pushExpression(parenExpr);
+			if(parenExpr != null) 
+				if(!stack[depth].pushExpression(parenExpr))
+					return undefined;
 		}
 		if(function_regex.test(expr)) {
 			stack.push(new StackFrame(stack[depth]));
@@ -416,11 +498,18 @@ function parseEquation(eqString) {
 				else {
 					stack[depth].pushOperation(log);
 					if(expr.length < 4)//there's no base specified
-						stack[depth].pushExpression(new Constant(10));
+						if(!stack[depth].pushExpression(new Constant(10)))
+							return undefined;
 				}
 			}
 			else if(/(sqrt)/.test(expr)) {
 				stack[depth].pushOperation(sqrt);
+			}
+			else if(/(sign)/.test(expr)) {
+				stack[depth].pushOperation(sign);
+			}
+			else if(/(H)/.test(expr)) {
+				stack[depth].pushOperation(H);
 			}
 		}
 		else if(operator_regex.test(expr)) {
@@ -460,36 +549,51 @@ function parseEquation(eqString) {
 				});
 			}
 			else { val = new T(); }
-			stack[depth].pushExpression(val);
+			if(!stack[depth].pushExpression(val)) return undefined;
 		}
 		
-		//console.log(lastOp[depth] + ', ' + currOp);
+		//console.log(stack[depth].lastOp + ', ' + currOp);
 		//console.log(stack[depth].lastAdd + ', ' + stack[depth].currAdd);
 		if(((stack[depth].currAdd == type.OP && !stack[depth].expressionList.length) ||
 		    (stack[depth].lastAdd == type.OP && stack[depth].currAdd != type.EXPR)) 
 				&& stack[depth].lastOperation() == sub) {
-			stack[depth].pushExpression(new Constant(0));
+			//console.log("Unary -");
+			if(!stack[depth].pushExpression(new Constant(0))) return undefined;
 			stack[depth].lastAdd = type.EXPR;
 			stack[depth].currAdd = type.OP;
+			stack[depth].unary = true;
 		}
-		if( stack[depth].orderBroken() ) {
+		if ( stack[depth].functionReady() ) {
+			//console.log('Completed function');
+			--depth;
+			if(!stack[depth].pushExpression(stack.pop().getCompleteExpression()))
+				return undefined;
+		}
+		else if( stack[depth].orderBroken() ) {
 			//we must evaluate an expression since we broke order of operations
 			//console.log('Broke order');
 			var op = stack[depth].operationList.pop();
-			stack[depth].expressionList = [ stack[depth].getExpression() ];
-			stack[depth].operationList  = [ op ];
-			stack[depth].numExprReq = op.length;
-		}
-		else if ( stack[depth].functionReady() ) {
-			//console.log('Completed function');
-			--depth;
-			stack[depth].pushExpression(stack.pop().getExpression());
+			stack[depth].getExpression(op);
+			stack[depth].pushOperation(op);
+			stack[depth].lastAdd = type.EXPR;
+			stack[depth].currAdd = type.OP;
 		}
 		//this runs into issues if chained more than 3 times
 		if(stack[depth].lastAdd == type.EXPR && stack[depth].currAdd != type.OP) {
+			//console.log("Implicit *");
 			stack[depth].pushOperation(mul);
 			stack[depth].lastAdd = type.OP;
 			stack[depth].currAdd = type.EXPR;
+			stack[depth].lastOp = mul.oo;
+			if( stack[depth].orderBroken() ) {
+				//we must evaluate an expression since we broke order of operations
+				//console.log('Broke order');
+				var op = stack[depth].operationList.pop();
+				var expr = stack[depth].expressionList.pop();
+				stack[depth].getExpression(op);
+				stack[depth].pushOperation(op);
+				if(!stack[depth].pushExpression(expr)) return undefined;
+			}
 		}
 		currOp && (stack[depth].lastOp = currOp);
 		//console.log("Depth: " + depth);
@@ -509,7 +613,8 @@ function parseEquation(eqString) {
 		getSymbol(stack[depth].lastOperation());
 		return undefined;
 	}
-	var final_expr = stack[depth].getExpression();
+	var final_expr = stack[depth].getCompleteExpression();;
 	console.log(final_expr.toString());
+	if(stack[depth].expressionList.length) { errString = 'Something weird happened'; return undefined; }
 	return final_expr;
 }
